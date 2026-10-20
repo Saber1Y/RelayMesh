@@ -168,3 +168,42 @@ export const executionPlans = pgTable(
     index("execution_plans_intent_id_idx").on(t.intentId),
   ],
 );
+
+/** Operational progress markers (e.g. the last finalized block the watcher scanned). Not evidence; may be updated. */
+export const watcherCursors = pgTable(
+  "watcher_cursors",
+  {
+    name: text("name").primaryKey(),
+    blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check("watcher_cursors_block_nonnegative", sql`${t.blockNumber} >= 0`)],
+);
+
+/**
+ * IntentRegistry writes confirmed on chain. Rows are only inserted after the transaction is mined
+ * and the contract state was read back, so a row is itself evidence. Append-only.
+ */
+export const registryAnchors = pgTable(
+  "registry_anchors",
+  {
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intents.intentId),
+    step: text("step").notNull(),
+    /** intentHash for step "intent", receiptHash for step "receipt". */
+    valueHash: text("value_hash").notNull(),
+    contractAddress: text("contract_address").notNull(),
+    chainId: integer("chain_id").notNull(),
+    txHash: text("tx_hash").notNull(),
+    blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
+    insertedAt: insertedAt(),
+  },
+  (t) => [
+    primaryKey({ name: "registry_anchors_pkey", columns: [t.intentId, t.step] }),
+    check("registry_anchors_step_valid", sql`${t.step} IN ('intent', 'receipt')`),
+    check("registry_anchors_value_hash_hex", hex(t.valueHash, 32)),
+    check("registry_anchors_tx_hash_hex", hex(t.txHash, 32)),
+    check("registry_anchors_contract_hex", sql`${t.contractAddress} ~ '^0x[0-9a-f]{40}$'`),
+  ],
+);

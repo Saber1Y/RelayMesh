@@ -29,6 +29,20 @@
       "when": 1792481463285,
       "tag": "0003_execution_plans_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792484178731,
+      "tag": "0004_watcher",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792484179575,
+      "tag": "0005_registry_anchors_append_only",
+      "breakpoints": true
     }
   ]
 }

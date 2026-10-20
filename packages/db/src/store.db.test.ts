@@ -30,7 +30,7 @@ const url = process.env.TEST_DATABASE_URL as string;
 const { db, close } = connectDb(url, { max: 5 });
 afterAll(() => close());
 beforeEach(async () => {
-  await db.execute(sql`TRUNCATE execution_plans, status_events, idempotency_records, quotes, intents`);
+  await db.execute(sql`TRUNCATE watcher_cursors, registry_anchors, execution_plans, status_events, idempotency_records, quotes, intents`);
 });
 
 const NOW = 1_792_500_000;
