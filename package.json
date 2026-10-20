@@ -1,0 +1,25 @@
+{
+  "name": "relaymesh",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "vitest run",
+    "spike:substrate": "pnpm --filter @relaymesh/chains spike:substrate",
+    "spike:mapping": "pnpm --filter @relaymesh/chains spike:mapping"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.13.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "~8.71.1",
+    "vitest": "^5.0.5"
+  }
+}
