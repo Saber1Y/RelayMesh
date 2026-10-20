@@ -82,3 +82,25 @@ Not yet deployed, because we have no tPOT.
 - Run a real Substrate to EVM transfer and record both sides in `docs/evidence.md`.
 - Deploy `IntentRegistry` and exercise `recordIntent` / `recordReceipt` on V3.
 - Waiting on the PortalDot team for iBridge timing, an MMR-proof-capable node, and track eligibility.
+
+## 2026-10-20: Core package and database
+
+### `packages/core`
+
+Intent schema, canonical hashing, the status state machine, quotes, settlement assessment, idempotency, and receipts.
+These are pure functions with no I/O.
+55 unit tests pass (`pnpm test`).
+
+### `packages/db`
+
+Postgres 17.6 runs locally via `docker-compose.yml` (`pnpm db:up`), with Drizzle ORM 0.45 and the `postgres` driver.
+
+- Tables: `intents`, `quotes`, `status_events`, `idempotency_records`.
+- Amounts are `numeric(78,0)` read as bigint; a value above 2^64 round-trips exactly in tests.
+- `status_events` is the source of truth; `intents.current_status` is a projection checked on every load.
+- Database triggers make `status_events`, `quotes` and `idempotency_records` append-only, and make intent terms immutable after insert.
+- Every load re-verifies the stored intent against its hash and replays the full status history through the core state machine.
+- Status changes take a row lock on the intent, so concurrent watchers cannot write conflicting transitions.
+- Idempotent intent creation is race-safe: 5 concurrent requests with the same key create exactly one intent.
+
+`pnpm test:db` resets the `relaymesh_test` database, applies migrations and runs 15 integration tests against real Postgres. All pass.
