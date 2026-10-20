@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+/*
+  RelayMesh tokens. Cool zinc neutrals, one cobalt accent, and status colors used only for state.
+  Shape rule: controls (inputs, buttons, badges) are 8px; panels are 12px.
+*/
+:root {
+  --canvas: #f5f6f8;
+  --surface: #ffffff;
+  --raised: #eef0f4;
+  --line: #dde1e8;
+  --line-strong: #c5cbd5;
+  --ink: #13161c;
+  --muted: #545d6b;
+  --accent: #2a55d4;
+  --accent-hover: #2247b5;
+  --accent-ink: #ffffff;
+  --accent-soft: #e8eefc;
+  --positive: #187a4f;
+  --positive-soft: #e3f4ec;
+  --caution: #8f5a00;
+  --caution-soft: #fbf0dc;
+  --critical: #b8323d;
+  --critical-soft: #fbe7e9;
+  --focus: #2a55d4;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #0d0f13;
+    --surface: #13161c;
+    --raised: #1a1e26;
+    --line: #262b35;
+    --line-strong: #353c49;
+    --ink: #e8ebf1;
+    --muted: #9ba4b3;
+    --accent: #7d9ef5;
+    --accent-hover: #9bb5f8;
+    --accent-ink: #0d0f13;
+    --accent-soft: #1b2643;
+    --positive: #53c592;
+    --positive-soft: #11291f;
+    --caution: #e2a948;
+    --caution-soft: #2e2311;
+    --critical: #f0808a;
+    --critical-soft: #34161a;
+    --focus: #9bb5f8;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-positive: var(--positive);
+  --color-positive-soft: var(--positive-soft);
+  --color-caution: var(--caution);
+  --color-caution-soft: var(--caution-soft);
+  --color-critical: var(--critical);
+  --color-critical-soft: var(--critical-soft);
+  --color-focus: var(--focus);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    font-feature-settings: "ss01", "cv11";
+  }
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
