@@ -328,3 +328,43 @@ describe("append-only enforcement in the database", () => {
     );
   });
 });
+
+describe("activity summaries", () => {
+  it("counts by status, lists recent intents and measures settlement time", async () => {
+    const { countIntentsByStatus, listRecentIntents, recentSettlementSeconds } = await import("./activity-store");
+    const a = await newIntent();
+    const b = await newIntent();
+    const quote = quoteFor(b.intent.intentId);
+    await recordQuotes(db, b.intent.intentId, [quote], NOW + 1);
+    await selectQuote(db, b.intent.intentId, quote.quoteId, NOW + 2, planFor(quote));
+    const source: Evidence = {
+      kind: "source_transaction",
+      chain: "portaldot-v3-substrate",
+      method: "substrate_block_extrinsic",
+      txHash: TX_HASH,
+      blockHash: BLOCK_HASH,
+      blockNumber: 10n,
+      finalized: true,
+      observedAt: NOW + 10,
+    };
+    await appendStatusEvent(db, b.intent.intentId, { status: "SOURCE_SUBMITTED", at: NOW + 10, reason: "in block", evidence: { ...source, finalized: false } });
+    await appendStatusEvent(db, b.intent.intentId, { status: "SOURCE_CONFIRMED", at: NOW + 20, reason: "final", evidence: source });
+    await appendStatusEvent(db, b.intent.intentId, { status: "DESTINATION_PENDING", at: NOW + 20, reason: "measuring" });
+    await appendStatusEvent(db, b.intent.intentId, {
+      status: "SETTLED",
+      at: NOW + 29,
+      reason: "observed",
+      evidence: { kind: "destination_state", chain: "portaldot-v3-evm", method: "evm_balance_delta", amount: 1n, finalized: true, observedAt: NOW + 29 },
+      verificationMode: "destination_rpc_state",
+    });
+
+    const counts = await countIntentsByStatus(db);
+    expect(counts.DRAFT).toBe(1);
+    expect(counts.SETTLED).toBe(1);
+    expect(counts.EXPIRED).toBe(0);
+    const recent = await listRecentIntents(db, 5);
+    expect(recent.map((r) => r.intentId).sort()).toEqual([a.intent.intentId, b.intent.intentId].sort());
+    expect(recent.find((r) => r.intentId === b.intent.intentId)?.sourceAmount).toBe(a.intent.source.amount);
+    expect(await recentSettlementSeconds(db)).toEqual([19]);
+  });
+});
