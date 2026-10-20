@@ -15,6 +15,20 @@
       "when": 1792480443017,
       "tag": "0001_append_only_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792481462398,
+      "tag": "0002_execution_plans",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792481463285,
+      "tag": "0003_execution_plans_append_only",
+      "breakpoints": true
     }
   ]
 }

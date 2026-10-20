@@ -17,9 +17,9 @@ import {
   type StatusEvent,
   type VerificationMode,
 } from "@relaymesh/core";
-import type { Db } from "./client.js";
-import { evidenceFromJson, evidenceToJson, feesFromJson, feesToJson } from "./codec.js";
-import { idempotencyRecords, intents, quotes, statusEvents } from "./schema.js";
+import type { Db } from "./client";
+import { evidenceFromJson, evidenceToJson, feesFromJson, feesToJson } from "./codec";
+import { executionPlans, idempotencyRecords, intents, quotes, statusEvents } from "./schema";
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Executor = Db | Tx;
@@ -230,11 +230,36 @@ function toQuote(row: typeof quotes.$inferSelect): Quote {
   };
 }
 
+/** The unsigned call handed to the wallet. Mirrors the routes package's SubstrateCallPlan without depending on it. */
+export interface ExecutionPlanRecord {
+  planId: string;
+  quoteId: string;
+  kind: "substrate_call";
+  chain: string;
+  signer: string;
+  callHex: Hex;
+  destinationAccount: string;
+  estimatedFee: bigint;
+  submitBefore: number;
+  createdAt: number;
+}
+
+async function insertPlan(tx: Tx, intentId: Hex, plan: ExecutionPlanRecord): Promise<void> {
+  await tx.insert(executionPlans).values({ ...plan, intentId });
+}
+
 /**
  * Selects a stored quote for signing: re-checks expiry and constraints at `now`, records the
- * selection and moves the intent to AWAITING_SIGNATURE atomically.
+ * selection and the plan the wallet will sign, and moves the intent to AWAITING_SIGNATURE atomically.
  */
-export async function selectQuote(db: Db, intentId: Hex, quoteId: string, now: number): Promise<{ quote: Quote; event: StatusEvent }> {
+export async function selectQuote(
+  db: Db,
+  intentId: Hex,
+  quoteId: string,
+  now: number,
+  plan: ExecutionPlanRecord,
+): Promise<{ quote: Quote; event: StatusEvent }> {
+  if (plan.quoteId !== quoteId) throw new RelayMeshError("QUOTE_MISMATCH", "Plan was built for a different quote");
   return db.transaction(async (tx) => {
     const stored = await lockIntent(tx, intentId);
     const [row] = await tx.select().from(quotes).where(eq(quotes.quoteId, quoteId));
@@ -242,7 +267,45 @@ export async function selectQuote(db: Db, intentId: Hex, quoteId: string, now: n
     const quote = toQuote(row);
     assertQuoteUsable(quote, stored.intent, now);
     const event = await appendLocked(tx, stored, { status: "AWAITING_SIGNATURE", at: now, reason: `selected ${quote.provider} quote ${quoteId}` }, quoteId);
+    await insertPlan(tx, intentId, plan);
     return { quote, event };
+  });
+}
+
+/**
+ * Records a re-built plan for the already-selected quote (e.g. the user reopened the review screen).
+ * Only valid while the intent is AWAITING_SIGNATURE on that quote.
+ */
+export async function addExecutionPlan(db: Db, intentId: Hex, plan: ExecutionPlanRecord): Promise<void> {
+  await db.transaction(async (tx) => {
+    const stored = await lockIntent(tx, intentId);
+    if (currentStatus(stored.history) !== "AWAITING_SIGNATURE" || stored.selectedQuoteId !== plan.quoteId) {
+      throw new RelayMeshError("INVALID_TRANSITION", "Plans can only be added for the selected quote while awaiting signature");
+    }
+    await insertPlan(tx, intentId, plan);
+  });
+}
+
+export async function listExecutionPlans(db: Executor, intentId: Hex): Promise<ExecutionPlanRecord[]> {
+  const rows = await db
+    .select()
+    .from(executionPlans)
+    .where(eq(executionPlans.intentId, intentId))
+    .orderBy(asc(executionPlans.createdAt), asc(executionPlans.insertedAt));
+  return rows.map((r) => {
+    if (r.kind !== "substrate_call") throw new RelayMeshError("INTEGRITY_ERROR", `Unknown plan kind ${r.kind}`);
+    return {
+      planId: r.planId,
+      quoteId: r.quoteId,
+      kind: r.kind,
+      chain: r.chain,
+      signer: r.signer,
+      callHex: r.callHex as Hex,
+      destinationAccount: r.destinationAccount,
+      estimatedFee: r.estimatedFee,
+      submitBefore: r.submitBefore,
+      createdAt: r.createdAt,
+    };
   });
 }
 

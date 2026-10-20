@@ -138,3 +138,33 @@ export const idempotencyRecords = pgTable(
   },
   (t) => [check("idempotency_records_request_hash_hex", hex(t.requestHash, 32))],
 );
+
+/** The exact unsigned call handed to the user's wallet, kept so the submitted extrinsic can be verified against it. */
+export const executionPlans = pgTable(
+  "execution_plans",
+  {
+    planId: text("plan_id").primaryKey(),
+    intentId: text("intent_id").notNull(),
+    quoteId: text("quote_id").notNull(),
+    kind: text("kind").notNull(),
+    chain: text("chain").notNull(),
+    signer: text("signer").notNull(),
+    callHex: text("call_hex").notNull(),
+    destinationAccount: text("destination_account").notNull(),
+    estimatedFee: amount("estimated_fee").notNull(),
+    submitBefore: unixSeconds("submit_before").notNull(),
+    createdAt: unixSeconds("created_at").notNull(),
+    insertedAt: insertedAt(),
+  },
+  (t) => [
+    foreignKey({
+      name: "execution_plans_quote_fk",
+      columns: [t.quoteId, t.intentId],
+      foreignColumns: [quotes.quoteId, quotes.intentId],
+    }),
+    check("execution_plans_kind_valid", sql`${t.kind} IN ('substrate_call')`),
+    check("execution_plans_call_hex", sql`${t.callHex} ~ '^0x([0-9a-f]{2})+$'`),
+    check("execution_plans_fee_nonnegative", sql`${t.estimatedFee} >= 0`),
+    index("execution_plans_intent_id_idx").on(t.intentId),
+  ],
+);

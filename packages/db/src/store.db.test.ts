@@ -12,22 +12,25 @@ import {
   type Quote,
   type RelayMeshErrorCode,
 } from "@relaymesh/core";
-import { connectDb } from "./client.js";
+import { connectDb } from "./client";
 import {
   appendStatusEvent,
   insertIntent,
   listIntentIdsByStatus,
+  addExecutionPlan,
+  listExecutionPlans,
   listQuotes,
   loadIntent,
   recordQuotes,
   selectQuote,
-} from "./store.js";
+  type ExecutionPlanRecord,
+} from "./store";
 
 const url = process.env.TEST_DATABASE_URL as string;
 const { db, close } = connectDb(url, { max: 5 });
 afterAll(() => close());
 beforeEach(async () => {
-  await db.execute(sql`TRUNCATE status_events, idempotency_records, quotes, intents`);
+  await db.execute(sql`TRUNCATE execution_plans, status_events, idempotency_records, quotes, intents`);
 });
 
 const NOW = 1_792_500_000;
@@ -63,6 +66,21 @@ function quoteFor(intentId: Hex, overrides: Partial<Quote> = {}): Quote {
     expiresAt: NOW + 120,
     estimatedSeconds: 30,
     ...overrides,
+  };
+}
+
+function planFor(quote: Quote, at = NOW + 2): ExecutionPlanRecord {
+  return {
+    planId: `plan-${crypto.randomUUID()}`,
+    quoteId: quote.quoteId,
+    kind: "substrate_call",
+    chain: "portaldot-v3-substrate",
+    signer: "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY",
+    callHex: "0x0603aa",
+    destinationAccount: "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty",
+    estimatedFee: 1_490_601_551_715n,
+    submitBefore: quote.expiresAt,
+    createdAt: at,
   };
 }
 
@@ -141,7 +159,7 @@ describe("quotes and status events", () => {
     await recordQuotes(db, intent.intentId, [quote], NOW + 1);
     expect(await listQuotes(db, intent.intentId)).toEqual([quote]);
 
-    const { event } = await selectQuote(db, intent.intentId, quote.quoteId, NOW + 2);
+    const { event } = await selectQuote(db, intent.intentId, quote.quoteId, NOW + 2, planFor(quote));
     expect(event.status).toBe("AWAITING_SIGNATURE");
 
     const source: Evidence = {
@@ -200,7 +218,7 @@ describe("quotes and status events", () => {
     const { intent } = await newIntent();
     const quote = quoteFor(intent.intentId);
     await recordQuotes(db, intent.intentId, [quote], NOW + 1);
-    await expectCode(selectQuote(db, intent.intentId, quote.quoteId, quote.expiresAt), "QUOTE_EXPIRED");
+    await expectCode(selectQuote(db, intent.intentId, quote.quoteId, quote.expiresAt, planFor(quote)), "QUOTE_EXPIRED");
     const stored = await loadIntent(db, intent.intentId);
     expect(stored?.history.at(-1)?.status).toBe("QUOTED");
     expect(stored?.selectedQuoteId).toBeNull();
@@ -212,14 +230,14 @@ describe("quotes and status events", () => {
     const quote = quoteFor(b.intent.intentId);
     await recordQuotes(db, a.intent.intentId, [quoteFor(a.intent.intentId)], NOW + 1);
     await recordQuotes(db, b.intent.intentId, [quote], NOW + 1);
-    await expectCode(selectQuote(db, a.intent.intentId, quote.quoteId, NOW + 2), "QUOTE_MISMATCH");
+    await expectCode(selectQuote(db, a.intent.intentId, quote.quoteId, NOW + 2, planFor(quote)), "QUOTE_MISMATCH");
   });
 
   it("re-quoting clears a previous selection", async () => {
     const { intent } = await newIntent();
     const first = quoteFor(intent.intentId);
     await recordQuotes(db, intent.intentId, [first], NOW + 1);
-    await selectQuote(db, intent.intentId, first.quoteId, NOW + 2);
+    await selectQuote(db, intent.intentId, first.quoteId, NOW + 2, planFor(first));
     await recordQuotes(db, intent.intentId, [quoteFor(intent.intentId, { retrievedAt: NOW + 130, expiresAt: NOW + 250 })], NOW + 130);
     const stored = await loadIntent(db, intent.intentId);
     expect(stored?.history.at(-1)?.status).toBe("QUOTED");
@@ -238,7 +256,7 @@ describe("quotes and status events", () => {
     const { intent } = await newIntent();
     const quote = quoteFor(intent.intentId);
     await recordQuotes(db, intent.intentId, [quote], NOW + 1);
-    await selectQuote(db, intent.intentId, quote.quoteId, NOW + 2);
+    await selectQuote(db, intent.intentId, quote.quoteId, NOW + 2, planFor(quote));
     const submit = () =>
       appendStatusEvent(db, intent.intentId, {
         status: "SOURCE_SUBMITTED",
@@ -249,6 +267,38 @@ describe("quotes and status events", () => {
     const results = await Promise.allSettled([submit(), submit(), submit()]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect((await loadIntent(db, intent.intentId))?.history.filter((e) => e.status === "SOURCE_SUBMITTED")).toHaveLength(1);
+  });
+});
+
+describe("execution plans", () => {
+  it("stores the plan with the selection and allows re-built plans only while awaiting signature", async () => {
+    const { intent } = await newIntent();
+    const quote = quoteFor(intent.intentId);
+    await recordQuotes(db, intent.intentId, [quote], NOW + 1);
+    const first = planFor(quote);
+    await selectQuote(db, intent.intentId, quote.quoteId, NOW + 2, first);
+    const second = planFor(quote, NOW + 3);
+    await addExecutionPlan(db, intent.intentId, second);
+    expect(await listExecutionPlans(db, intent.intentId)).toEqual([first, second]);
+
+    await expectCode(addExecutionPlan(db, intent.intentId, planFor(quoteFor(intent.intentId))), "INVALID_TRANSITION");
+  });
+
+  it("does not store a plan when selection fails", async () => {
+    const { intent } = await newIntent();
+    const quote = quoteFor(intent.intentId);
+    await recordQuotes(db, intent.intentId, [quote], NOW + 1);
+    await expectCode(selectQuote(db, intent.intentId, quote.quoteId, quote.expiresAt, planFor(quote)), "QUOTE_EXPIRED");
+    await expectCode(selectQuote(db, intent.intentId, quote.quoteId, NOW + 2, planFor(quoteFor(intent.intentId))), "QUOTE_MISMATCH");
+    expect(await listExecutionPlans(db, intent.intentId)).toEqual([]);
+  });
+
+  it("is append-only", async () => {
+    const { intent } = await newIntent();
+    const quote = quoteFor(intent.intentId);
+    await recordQuotes(db, intent.intentId, [quote], NOW + 1);
+    await selectQuote(db, intent.intentId, quote.quoteId, NOW + 2, planFor(quote));
+    await expectDbRejection(db.execute(sql`UPDATE execution_plans SET call_hex = '0x00' WHERE intent_id = ${intent.intentId}`), /append-only/);
   });
 });
 
