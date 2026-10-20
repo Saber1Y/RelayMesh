@@ -11,7 +11,7 @@ import {
   getFreeBalance,
   h160ForAccountId,
   loadPortaldotV3Config,
-} from "../src/index.js";
+} from "../src/index";
 
 const config = loadPortaldotV3Config();
 const api = await connectSubstrate(config.wsUrl);

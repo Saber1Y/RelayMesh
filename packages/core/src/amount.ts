@@ -1,4 +1,4 @@
-import { RelayMeshError } from "./errors.js";
+import { RelayMeshError } from "./errors";
 
 // All token amounts are integer base units (bigint). Decimal strings are only accepted at the edges
 // (user input, display) and are converted exactly, never through floating point.

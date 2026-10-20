@@ -1,5 +1,5 @@
 // Spike A: read-only check that the Substrate adapter works against PortalDot V3.
-import { connectSubstrate, getFreeBalance, getSubstrateChainInfo, loadPortaldotV3Config } from "../src/index.js";
+import { connectSubstrate, getFreeBalance, getSubstrateChainInfo, loadPortaldotV3Config } from "../src/index";
 
 const config = loadPortaldotV3Config();
 console.log(`Connecting to ${config.wsUrl}`);

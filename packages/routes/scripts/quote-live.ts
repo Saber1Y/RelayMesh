@@ -6,7 +6,7 @@
 import { bytesToHex, type Hex } from "viem";
 import { connectSubstrate, createV3NativeClient, h160ForAccountId, loadPortaldotV3Config } from "@relaymesh/chains";
 import { createIntent, formatBaseUnits } from "@relaymesh/core";
-import { collectQuotes, IBridgeProvider, V3SubstrateToEvmProvider } from "../src/index.js";
+import { collectQuotes, IBridgeProvider, V3SubstrateToEvmProvider } from "../src/index";
 import { decodeAddress } from "@polkadot/util-crypto";
 
 const config = loadPortaldotV3Config();

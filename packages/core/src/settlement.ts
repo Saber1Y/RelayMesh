@@ -1,6 +1,6 @@
-import type { Intent } from "./intent.js";
-import type { Quote } from "./quote.js";
-import type { Evidence } from "./status.js";
+import type { Intent } from "./intent";
+import type { Quote } from "./quote";
+import type { Evidence } from "./status";
 
 export type SettlementDecision =
   | { decision: "settled"; reason: string }

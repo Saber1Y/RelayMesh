@@ -1,9 +1,9 @@
 import { bytesToHex, type Hex } from "viem";
 import { z } from "zod";
-import { parseBaseUnits } from "./amount.js";
-import { hashCanonical } from "./canonical.js";
-import { getAsset, getChain, normalizeAddress, type ChainId } from "./chains.js";
-import { RelayMeshError } from "./errors.js";
+import { parseBaseUnits } from "./amount";
+import { hashCanonical } from "./canonical";
+import { getAsset, getChain, normalizeAddress, type ChainId } from "./chains";
+import { RelayMeshError } from "./errors";
 
 export const INTENT_HASH_DOMAIN = "relaymesh.intent.v1";
 

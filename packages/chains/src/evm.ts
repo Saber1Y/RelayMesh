@@ -1,5 +1,5 @@
 import { createPublicClient, defineChain, http, type PublicClient } from "viem";
-import type { PortaldotV3Config } from "./config.js";
+import type { PortaldotV3Config } from "./config";
 
 export function portaldotV3EvmChain(config: PortaldotV3Config) {
   return defineChain({

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { isRelayMeshError } from "./errors.js";
-import { appendStatus, createHistory, currentStatus, isTerminal, type Evidence, type StatusEvent } from "./status.js";
-import { BLOCK_HASH, NOW, TX_HASH } from "./test-fixtures.js";
+import { isRelayMeshError } from "./errors";
+import { appendStatus, createHistory, currentStatus, isTerminal, type Evidence, type StatusEvent } from "./status";
+import { BLOCK_HASH, NOW, TX_HASH } from "./test-fixtures";
 
 const submitted: Evidence = {
   kind: "source_transaction",

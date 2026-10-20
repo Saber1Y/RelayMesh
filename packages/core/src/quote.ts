@@ -1,7 +1,7 @@
 import type { Hex } from "viem";
-import type { ChainId } from "./chains.js";
-import { RelayMeshError } from "./errors.js";
-import type { Intent } from "./intent.js";
+import type { ChainId } from "./chains";
+import { RelayMeshError } from "./errors";
+import type { Intent } from "./intent";
 
 export type FeeKind = "network" | "provider" | "storage_deposit";
 

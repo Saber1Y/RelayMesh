@@ -1,6 +1,6 @@
 import type { Hex } from "viem";
-import { hashCanonical } from "./canonical.js";
-import { RelayMeshError } from "./errors.js";
+import { hashCanonical } from "./canonical";
+import { RelayMeshError } from "./errors";
 
 export const REQUEST_HASH_DOMAIN = "relaymesh.request.v1";
 

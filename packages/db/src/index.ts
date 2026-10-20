@@ -1,4 +1,4 @@
-export * from "./client.js";
-export * from "./codec.js";
-export * as schema from "./schema.js";
-export * from "./store.js";
+export * from "./client";
+export * from "./codec";
+export * as schema from "./schema";
+export * from "./store";

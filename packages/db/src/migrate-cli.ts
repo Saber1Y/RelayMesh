@@ -1,4 +1,5 @@
-import { connectDb, runMigrations } from "./client.js";
+import { connectDb } from "./client";
+import { runMigrations } from "./migrate";
 
 const url = process.env.DATABASE_URL;
 if (!url) {

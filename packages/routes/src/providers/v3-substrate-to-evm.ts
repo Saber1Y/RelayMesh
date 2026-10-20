@@ -3,7 +3,7 @@ import { decodeAddress, encodeAddress } from "@polkadot/util-crypto";
 import type { Hex } from "viem";
 import { fallbackAccountIdForH160, type V3NativeClient } from "@relaymesh/chains";
 import { assertQuoteUsable, getAsset, RelayMeshError, type Intent, type Quote } from "@relaymesh/core";
-import type { ExecutionPlan, ProviderStatus, QuoteContext, QuoteResult, RouteProvider } from "../types.js";
+import type { ExecutionPlan, ProviderStatus, QuoteContext, QuoteResult, RouteProvider } from "../types";
 
 export const V3_SUBSTRATE_TO_EVM_PROVIDER_ID = "portaldot-v3-native";
 export const V3_SUBSTRATE_TO_EVM_ROUTE_ID = "v3-substrate-to-evm";

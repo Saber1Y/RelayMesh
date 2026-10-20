@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalJson, hashCanonical } from "./canonical.js";
+import { canonicalJson, hashCanonical } from "./canonical";
 
 describe("canonicalJson", () => {
   it("sorts keys recursively and omits undefined properties", () => {

@@ -1,7 +1,7 @@
 import { u8aToHex } from "@polkadot/util";
 import { decodeAddress, keccak256AsU8a } from "@polkadot/util-crypto";
 import { describe, expect, it } from "vitest";
-import { fallbackAccountIdForH160, h160ForAccountId, isEthDerivedAccountId } from "./revive-address.js";
+import { fallbackAccountIdForH160, h160ForAccountId, isEthDerivedAccountId } from "./revive-address";
 
 const ALICE = decodeAddress("5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY");
 const H160 = "0x1234567890abcdef1234567890abcdef12345678";

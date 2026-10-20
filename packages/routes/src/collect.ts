@@ -1,5 +1,5 @@
 import { sourceFeeTotal, type Intent, type Quote } from "@relaymesh/core";
-import type { QuoteContext, RouteProvider, RouteRejectionCode } from "./types.js";
+import type { QuoteContext, RouteProvider, RouteRejectionCode } from "./types";
 
 export interface ProviderRejection {
   provider: string;

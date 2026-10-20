@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isRelayMeshError } from "./errors.js";
-import { hashRequest, resolveIdempotency } from "./idempotency.js";
-import { buildReceipt, hashReceipt, serializeReceipt } from "./receipt.js";
-import { appendStatus, createHistory, type Evidence } from "./status.js";
-import { BLOCK_HASH, fixtureIntent, fixtureQuote, INTENT_ID, NOW, TX_HASH, validInput } from "./test-fixtures.js";
+import { isRelayMeshError } from "./errors";
+import { hashRequest, resolveIdempotency } from "./idempotency";
+import { buildReceipt, hashReceipt, serializeReceipt } from "./receipt";
+import { appendStatus, createHistory, type Evidence } from "./status";
+import { BLOCK_HASH, fixtureIntent, fixtureQuote, INTENT_ID, NOW, TX_HASH, validInput } from "./test-fixtures";
 
 describe("idempotency", () => {
   const body = validInput();

@@ -1,5 +1,5 @@
 import { keccak256, stringToBytes, type Hex } from "viem";
-import { RelayMeshError } from "./errors.js";
+import { RelayMeshError } from "./errors";
 
 /**
  * Deterministic JSON: object keys sorted, undefined properties omitted, bigint written as a decimal

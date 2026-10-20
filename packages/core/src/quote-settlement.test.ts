@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { isRelayMeshError, type RelayMeshErrorCode } from "./errors.js";
-import { assertQuoteUsable, otherFees, sourceFeeTotal } from "./quote.js";
-import { assessSettlement } from "./settlement.js";
-import type { Evidence } from "./status.js";
-import { fixtureIntent, fixtureQuote, NOW } from "./test-fixtures.js";
+import { isRelayMeshError, type RelayMeshErrorCode } from "./errors";
+import { assertQuoteUsable, otherFees, sourceFeeTotal } from "./quote";
+import { assessSettlement } from "./settlement";
+import type { Evidence } from "./status";
+import { fixtureIntent, fixtureQuote, NOW } from "./test-fixtures";
 
 function expectCode(fn: () => unknown, code: RelayMeshErrorCode): void {
   try {

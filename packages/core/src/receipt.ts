@@ -1,10 +1,10 @@
 import type { Hex } from "viem";
-import { canonicalJson, hashCanonical } from "./canonical.js";
-import type { ChainId } from "./chains.js";
-import { RelayMeshError } from "./errors.js";
-import { hashIntent, type Intent } from "./intent.js";
-import type { Quote } from "./quote.js";
-import { currentStatus, type Evidence, type IntentStatus, type StatusEvent, type VerificationMode } from "./status.js";
+import { canonicalJson, hashCanonical } from "./canonical";
+import type { ChainId } from "./chains";
+import { RelayMeshError } from "./errors";
+import { hashIntent, type Intent } from "./intent";
+import type { Quote } from "./quote";
+import { currentStatus, type Evidence, type IntentStatus, type StatusEvent, type VerificationMode } from "./status";
 
 export const RECEIPT_HASH_DOMAIN = "relaymesh.receipt.v1";
 

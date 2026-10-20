@@ -1,5 +1,5 @@
 import { RelayMeshError } from "@relaymesh/core";
-import type { ExecutionPlan, ProviderStatus, QuoteResult, RouteProvider } from "../types.js";
+import type { ExecutionPlan, ProviderStatus, QuoteResult, RouteProvider } from "../types";
 
 export const IBRIDGE_PROVIDER_ID = "portaldot-ibridge";
 

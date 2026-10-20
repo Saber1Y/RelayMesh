@@ -1,6 +1,6 @@
 import type { Hex } from "viem";
-import type { ChainId } from "./chains.js";
-import { RelayMeshError } from "./errors.js";
+import type { ChainId } from "./chains";
+import { RelayMeshError } from "./errors";
 
 export const INTENT_STATUSES = [
   "DRAFT",

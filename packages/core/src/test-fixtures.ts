@@ -1,7 +1,7 @@
 // Shared test fixtures. Not exported from the package entry point.
 import type { Hex } from "viem";
-import { createIntent, type IntentInput } from "./intent.js";
-import type { Quote } from "./quote.js";
+import { createIntent, type IntentInput } from "./intent";
+import type { Quote } from "./quote";
 
 export const NOW = 1_792_500_000;
 export const ALICE = "5GrwvaEF5zXb26Fz9rcQpDWS57CtERHpNehXCPcNoHGKutQY";

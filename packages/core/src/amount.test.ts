@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { convertDecimals, formatBaseUnits, parseBaseUnits, parseDecimalAmount } from "./amount.js";
-import { isRelayMeshError } from "./errors.js";
+import { convertDecimals, formatBaseUnits, parseBaseUnits, parseDecimalAmount } from "./amount";
+import { isRelayMeshError } from "./errors";
 
 describe("amounts", () => {
   it("parses decimal strings exactly, without floating point", () => {

@@ -1,6 +1,7 @@
 // Resets the test database schema and applies migrations once per `pnpm test:db` run.
 import postgres from "postgres";
-import { connectDb, runMigrations } from "../src/client.js";
+import { connectDb } from "../src/client";
+import { runMigrations } from "../src/migrate";
 
 export default async function setup(): Promise<void> {
   const url = process.env.TEST_DATABASE_URL;

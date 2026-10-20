@@ -4,10 +4,10 @@ import type { Hex } from "viem";
 import { describe, expect, it } from "vitest";
 import { fallbackAccountIdForH160, type AccountBalance, type V3NativeClient } from "@relaymesh/chains";
 import { createIntent, isRelayMeshError, type IntentInput, type Quote, type RelayMeshErrorCode } from "@relaymesh/core";
-import { collectQuotes, rankQuotes } from "./collect.js";
-import { IBridgeProvider } from "./providers/ibridge.js";
-import { QUOTE_TTL_SECONDS, V3SubstrateToEvmProvider } from "./providers/v3-substrate-to-evm.js";
-import type { QuoteResult, RouteProvider } from "./types.js";
+import { collectQuotes, rankQuotes } from "./collect";
+import { IBridgeProvider } from "./providers/ibridge";
+import { QUOTE_TTL_SECONDS, V3SubstrateToEvmProvider } from "./providers/v3-substrate-to-evm";
+import type { QuoteResult, RouteProvider } from "./types";
 
 // Test double for the V3 chain reads. Values mirror the live V3 testnet constants from docs/devlog.md.
 const ED = 10_000_000_000_000n; // 0.1 tPOT

@@ -1,6 +1,6 @@
 import { decodeAddress, encodeAddress } from "@polkadot/util-crypto";
 import { getAddress, isAddress } from "viem";
-import { RelayMeshError } from "./errors.js";
+import { RelayMeshError } from "./errors";
 
 export type AddressKind = "ss58" | "evm";
 

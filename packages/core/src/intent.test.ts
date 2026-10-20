@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { normalizeAddress } from "./chains.js";
-import { isRelayMeshError, type RelayMeshErrorCode } from "./errors.js";
-import { createIntent, hashIntent, MAX_DEADLINE_SECONDS } from "./intent.js";
-import { ALICE, EVM_RECIPIENT, fixtureIntent, INTENT_ID, NOW, validInput } from "./test-fixtures.js";
+import { normalizeAddress } from "./chains";
+import { isRelayMeshError, type RelayMeshErrorCode } from "./errors";
+import { createIntent, hashIntent, MAX_DEADLINE_SECONDS } from "./intent";
+import { ALICE, EVM_RECIPIENT, fixtureIntent, INTENT_ID, NOW, validInput } from "./test-fixtures";
 
 function expectCode(fn: () => unknown, code: RelayMeshErrorCode, field?: string): void {
   try {
