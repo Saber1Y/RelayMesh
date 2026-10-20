@@ -162,3 +162,31 @@ After signing, intents stay at "In block" until the watcher (next task) confirms
 - Turbopack does not map NodeNext-style `./x.js` imports to `.ts` sources, so all packages now use `moduleResolution: Bundler` with extensionless relative imports.
 - `runMigrations` moved to `@relaymesh/db/src/migrate.ts` so app bundles never try to resolve the SQL folder.
 - `next.config.ts` force-reloads the repository-root `.env`, because `@next/env` caches the env it loaded for `apps/web`.
+
+## 2026-10-20: Watcher (`apps/worker`)
+
+### What a pass does
+
+1. Scans finalized blocks for extrinsics that are exactly a stored plan's call bytes, signed by the intent's requester, and not older than the plan. This catches transfers the browser never reported. The cursor is persisted and never moves backwards.
+2. `SOURCE_SUBMITTED` to `SOURCE_CONFIRMED` once the inclusion block is finalized and still canonical, after re-verifying the extrinsic. A replaced block becomes `NEEDS_REVIEW`.
+3. `SOURCE_CONFIRMED` to `DESTINATION_PENDING`.
+4. Measures `eth_getBalance` of the recipient at the inclusion block and the block before, from the EVM RPC. `SETTLED` with `destination_rpc_state` if the delta meets the expectation, otherwise `NEEDS_REVIEW` with the measurement kept as evidence.
+5. Expires unsigned intents. An `AWAITING_SIGNATURE` intent expires only after its deadline, after the longest plausible signed-transaction lifetime (30 minutes by default), and once the scanner has caught up to the finalized head.
+6. Anchors settled intents in `IntentRegistry` (`recordIntent`, then `recordReceipt` with the receipt hash), recovering from a crash between mining and recording by reading contract state and events. Rows in `registry_anchors` are written only after the transaction is mined.
+
+### Facts verified on the live V3 testnet
+
+- EVM block numbers equal Substrate block numbers; hashes differ, so evidence stores both.
+- Historical `eth_getBalance` works for recent blocks; about 1,000 blocks back returns "State already discarded". The watcher classifies this as `state_pruned` and flags the intent instead of guessing.
+- Fetching a block costs about 1.3 seconds from here, so the scanner fetches 10 blocks in parallel and matches them in order. A 50-block catch-up pass took 12.5 seconds.
+- Running against the dev database expired the two stale test intents with the expected reasons and persisted the cursor.
+
+### Tests
+
+`pnpm test:db` now runs 18 watcher integration tests against real Postgres with an in-memory V3 chain and registry (test doubles), covering settlement, finality waits, forks, short deliveries, no delivery, unindexed and pruned EVM state, the scanner (including wrong signer, pre-plan transactions, failed extrinsics, identical requests), cursor limits, expiry rules, clock skew between web server and worker, and registry recovery and refusal.
+
+### Not yet verified on chain
+
+- No real signed transfer has gone through yet (no tPOT), so `SETTLED` has only been reached in tests.
+- `IntentRegistry` is not deployed (needs about 96 tPOT). Anchoring is disabled until `INTENT_REGISTRY_ADDRESS` and `RELAYER_PRIVATE_KEY` are set; `pnpm --filter @relaymesh/contracts deploy:registry` deploys and verifies the code.
+- The contract field `requester` was renamed `recorder`, because the account that anchors is the RelayMesh relayer, not the user.
