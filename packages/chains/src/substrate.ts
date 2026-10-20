@@ -13,10 +13,19 @@ export interface SubstrateChainInfo {
   finalizedBlock: number;
 }
 
-export async function connectSubstrate(wsUrl: string, timeoutMs = 30_000): Promise<ApiPromise> {
-  // autoConnectMs = 0 so a bad endpoint fails fast instead of retrying forever.
-  const provider = new WsProvider(wsUrl, 0, {}, timeoutMs);
-  await provider.connect();
+export interface ConnectOptions {
+  timeoutMs?: number;
+  /** Reconnect delay for long-running servers. 0 (default) fails fast instead of retrying forever, for scripts. */
+  autoReconnectMs?: number;
+}
+
+export async function connectSubstrate(wsUrl: string, options: ConnectOptions = {}): Promise<ApiPromise> {
+  const { timeoutMs = 30_000, autoReconnectMs = 0 } = options;
+  const provider = new WsProvider(wsUrl, autoReconnectMs, {}, timeoutMs);
+  // With auto-reconnect the provider connects on construction (calling connect() again throws);
+  // otherwise connect explicitly so a bad URL fails fast. Either way, ApiPromise.create with
+  // throwOnConnect rejects if the first connection fails.
+  if (autoReconnectMs === 0) await provider.connect();
   return ApiPromise.create({ provider, noInitWarn: true, throwOnConnect: true });
 }
 
