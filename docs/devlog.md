@@ -104,3 +104,28 @@ Postgres 17.6 runs locally via `docker-compose.yml` (`pnpm db:up`), with Drizzle
 - Idempotent intent creation is race-safe: 5 concurrent requests with the same key create exactly one intent.
 
 `pnpm test:db` resets the `relaymesh_test` database, applies migrations and runs 15 integration tests against real Postgres. All pass.
+
+## 2026-10-20: Route providers
+
+### `packages/routes`
+
+- `RouteProvider` interface, `collectQuotes` (runs providers in parallel and reports every provider that produced no quote), and a deterministic `rankQuotes`.
+- `V3SubstrateToEvmProvider`: native tPOT from a Substrate account to an EVM address on V3 via `balances.transferKeepAlive`.
+  - The destination is the H160's mapped original account (`revive.originalAccount`), or its fallback account `h160 ++ 0xEE*12`.
+  - Expected EVM-side output = change in reducible balance (`free - max(frozen, ED)`) x `nativeToEthRatio`; settlement measures the real delta independently.
+  - Fees come from `payment_queryInfo` and are labeled estimates; quotes live 60 seconds.
+  - `buildExecution` re-reads chain state and refuses expired quotes, changed destination state, or fees above `maxFee`.
+- `IBridgeProvider`: always reports unavailable with the reason; it never returns quotes or simulated data.
+
+### Live read-only quote (`pnpm --filter @relaymesh/routes quote:live`)
+
+Requester: the public sudo account. Amount: 1 tPOT.
+
+| Case | Result |
+| --- | --- |
+| Fresh EVM address | Quote: expected output 0.9 tPOT on the EVM side (0.1 tPOT ED stays locked), fee estimate `1490601551715` (about 0.0149 tPOT) |
+| EVM address mapped to the requester | Rejected: `INVALID_RECIPIENT` |
+| iBridge | Rejected: `PROVIDER_UNAVAILABLE` |
+
+The plan's `callHex` decodes on-chain metadata to `balances.transferKeepAlive` with the fallback account and `100000000000000` base units.
+Nothing was signed or submitted.
