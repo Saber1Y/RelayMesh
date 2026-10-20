@@ -1,0 +1,21 @@
+{
+  "name": "@relaymesh/chains",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "spike:substrate": "tsx --env-file-if-exists=../../.env scripts/spike-substrate.ts",
+    "spike:mapping": "tsx --env-file-if-exists=../../.env scripts/spike-mapping.ts"
+  },
+  "dependencies": {
+    "@polkadot/api": "^17.0.2",
+    "@polkadot/api-augment": "^17.0.2",
+    "@polkadot/util": "^14.0.3",
+    "@polkadot/util-crypto": "^14.0.3",
+    "viem": "^2.57.7"
+  }
+}
