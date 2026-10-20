@@ -1,0 +1,408 @@
+import { u8aEq } from "@polkadot/util";
+import { decodeAddress } from "@polkadot/util-crypto";
+import { keccak256, stringToBytes, type Hex } from "viem";
+import type { BlockRef, V3ChainReader } from "@relaymesh/chains";
+import { assessSettlement, buildReceipt, hashReceipt, type Evidence, type Quote, type StatusEvent } from "@relaymesh/core";
+import {
+  advanceCursor,
+  appendStatusEvent,
+  getCursor,
+  listAnchors,
+  listExecutionPlans,
+  listIntentIdsByStatus,
+  listQuotes,
+  listSettledWithoutReceiptAnchor,
+  loadIntent,
+  recordAnchor,
+  type Db,
+  type StoredIntent,
+} from "@relaymesh/db";
+import type { Logger } from "./log";
+import { EVENT_LOOKBACK_BLOCKS, ZERO_ADDRESS, ZERO_HASH, type RegistryClient } from "./registry";
+
+export const SOURCE_SCAN_CURSOR = "source-scan";
+/** Blocks fetched in parallel while scanning. */
+const SCAN_CONCURRENCY = 10n;
+/** Plans issued slightly after the block's own clock still count; validator clocks drift a little. */
+const CLOCK_SKEW_SECONDS = 30;
+
+export interface WatcherContext {
+  db: Db;
+  chain: V3ChainReader;
+  registry: RegistryClient | null;
+  log: Logger;
+  now(): number;
+  config: { scanBackfillBlocks: number; maxBlocksPerPass: number; signedTxLifetimeSeconds: number };
+}
+
+export interface PassSummary {
+  finalized: bigint;
+  scannedTo: bigint;
+  caughtUp: boolean;
+  found: number;
+  confirmed: number;
+  settled: number;
+  flagged: number;
+  expired: number;
+  anchored: number;
+  errors: number;
+}
+
+function sameAccount(a: string, b: string): boolean {
+  try {
+    return u8aEq(decodeAddress(a), decodeAddress(b));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Event time for a new status. Status times must not go backwards, and the web server and worker may
+ * run on machines with slightly different clocks, so never stamp earlier than the latest event.
+ */
+function stamp(ctx: WatcherContext, stored: StoredIntent): number {
+  return Math.max(ctx.now(), stored.history.at(-1)?.at ?? 0);
+}
+
+function latestEvidence(history: StatusEvent[], kind: Evidence["kind"]): Evidence | undefined {
+  return [...history].reverse().find((e) => e.evidence?.kind === kind)?.evidence;
+}
+
+async function selectedQuote(ctx: WatcherContext, stored: StoredIntent): Promise<Quote | undefined> {
+  return (await listQuotes(ctx.db, stored.intent.intentId)).find((q) => q.quoteId === stored.selectedQuoteId);
+}
+
+/** Runs one stage per intent, isolating failures so one bad intent never blocks the rest. */
+async function eachIntent(ctx: WatcherContext, ids: Hex[], stage: string, fn: (id: Hex) => Promise<void>): Promise<number> {
+  let errors = 0;
+  for (const id of ids) {
+    try {
+      await fn(id);
+    } catch (error) {
+      errors++;
+      ctx.log.error(`${stage} failed`, { intentId: id, error });
+    }
+  }
+  return errors;
+}
+
+/**
+ * Scans finalized blocks for extrinsics that are exactly a stored plan's call, signed by the intent's
+ * requester. This finds transfers even when the browser never reported them, so nothing depends on
+ * client reports.
+ */
+async function scanForPlannedExtrinsics(ctx: WatcherContext, finalized: BlockRef, summary: PassSummary): Promise<void> {
+  const start = (await getCursor(ctx.db, SOURCE_SCAN_CURSOR)) ?? finalized.number - BigInt(ctx.config.scanBackfillBlocks);
+  const end = finalized.number < start + BigInt(ctx.config.maxBlocksPerPass) ? finalized.number : start + BigInt(ctx.config.maxBlocksPerPass);
+
+  // callHex -> candidate intents, oldest plan first, so identical requests are matched in order.
+  const watch = new Map<Hex, { intentId: Hex; signer: string; planCreatedAt: number }[]>();
+  for (const intentId of await listIntentIdsByStatus(ctx.db, ["AWAITING_SIGNATURE"], 500)) {
+    const stored = await loadIntent(ctx.db, intentId);
+    if (!stored) continue;
+    for (const plan of await listExecutionPlans(ctx.db, intentId)) {
+      if (plan.quoteId !== stored.selectedQuoteId) continue;
+      const list = watch.get(plan.callHex) ?? [];
+      list.push({ intentId, signer: stored.intent.requester, planCreatedAt: plan.createdAt });
+      watch.set(plan.callHex, list);
+    }
+  }
+  for (const list of watch.values()) list.sort((a, b) => a.planCreatedAt - b.planCreatedAt);
+
+  const matched = new Set<Hex>();
+  // Fetch blocks concurrently (each costs a couple of RPC round trips), but match them strictly in order.
+  for (let chunkStart = start + 1n; chunkStart <= end && watch.size > 0; chunkStart += SCAN_CONCURRENCY) {
+    const numbers: bigint[] = [];
+    for (let n = chunkStart; n <= end && n < chunkStart + SCAN_CONCURRENCY; n++) numbers.push(n);
+    const blocks = await Promise.all(
+      numbers.map(async (n) => {
+        const hash = await ctx.chain.canonicalHash(n);
+        if (!hash) throw new Error(`Node has no canonical block at finalized height ${n}`);
+        return { number: n, hash, extrinsics: await ctx.chain.blockExtrinsics(hash) };
+      }),
+    );
+
+    for (const block of blocks) {
+      let timestamp: number | undefined;
+      for (const ext of block.extrinsics) {
+        const candidates = ext.signer ? watch.get(ext.callHex) : undefined;
+        if (!candidates || !ext.signer) continue;
+        timestamp ??= await ctx.chain.blockTimestamp(block.hash);
+        const blockTime = timestamp;
+        const candidate = candidates.find(
+          (c) => !matched.has(c.intentId) && sameAccount(ext.signer as string, c.signer) && blockTime + CLOCK_SKEW_SECONDS >= c.planCreatedAt,
+        );
+        if (!candidate) continue;
+        matched.add(candidate.intentId);
+        await recordScannedSource(ctx, candidate.intentId, { number: block.number, hash: block.hash }, ext.hash, ext.callHex);
+        summary.found++;
+      }
+    }
+  }
+  await advanceCursor(ctx.db, SOURCE_SCAN_CURSOR, end);
+  summary.scannedTo = end;
+  summary.caughtUp = end === finalized.number;
+}
+
+async function recordScannedSource(ctx: WatcherContext, intentId: Hex, block: BlockRef, txHash: Hex, callHex: Hex): Promise<void> {
+  const stored = await loadIntent(ctx.db, intentId);
+  if (!stored || stored.history.at(-1)?.status !== "AWAITING_SIGNATURE") return;
+  const result = await ctx.chain.verifyExtrinsic({ blockHash: block.hash, txHash, expectedCallHex: callHex, expectedSigner: stored.intent.requester });
+  if (!result.found || !result.callMatches || !result.signerMatches) {
+    throw new Error(`Scanned extrinsic ${txHash} did not re-verify: ${result.found ? "call or signer mismatch" : result.reason}`);
+  }
+  const now = stamp(ctx, stored);
+  const evidence: Evidence = {
+    kind: "source_transaction",
+    chain: stored.intent.source.chain,
+    method: "watcher_finalized_block_scan",
+    txHash,
+    blockHash: block.hash,
+    blockNumber: block.number,
+    finalized: true,
+    observedAt: now,
+    details: { extrinsicIndex: String(result.extrinsicIndex), events: result.events.join(",") },
+  };
+  if (!result.success) {
+    await appendStatusEvent(ctx.db, intentId, {
+      status: "FAILED_BEFORE_SOURCE",
+      at: now,
+      reason: `found on chain in finalized block ${block.number}, but it failed: ${result.dispatchError ?? "unknown error"}; no funds were transferred`,
+      evidence,
+    });
+    return;
+  }
+  await appendStatusEvent(ctx.db, intentId, { status: "SOURCE_SUBMITTED", at: now, reason: `found by the watcher in finalized block ${block.number}`, evidence });
+  await appendStatusEvent(ctx.db, intentId, { status: "SOURCE_CONFIRMED", at: now, reason: `block ${block.number} is finalized`, evidence });
+  ctx.log.info("source found by scan", { intentId, block: block.number, txHash });
+}
+
+/** SOURCE_SUBMITTED -> SOURCE_CONFIRMED once the inclusion block is finalized and still canonical. */
+async function confirmSources(ctx: WatcherContext, finalized: BlockRef, summary: PassSummary): Promise<void> {
+  const ids = await listIntentIdsByStatus(ctx.db, ["SOURCE_SUBMITTED"]);
+  summary.errors += await eachIntent(ctx, ids, "confirm source", async (intentId) => {
+    const stored = await loadIntent(ctx.db, intentId);
+    const source = stored && latestEvidence(stored.history, "source_transaction");
+    if (!stored || !source?.blockHash || source.blockNumber === undefined || !source.txHash) {
+      throw new Error("SOURCE_SUBMITTED without block evidence");
+    }
+    if (finalized.number < source.blockNumber) return; // not final yet
+
+    const now = stamp(ctx, stored);
+    const canonical = await ctx.chain.canonicalHash(source.blockNumber);
+    if (canonical !== source.blockHash) {
+      await appendStatusEvent(ctx.db, intentId, {
+        status: "NEEDS_REVIEW",
+        at: now,
+        reason: `block ${source.blockNumber} was replaced on the finalized chain (finalized hash ${canonical ?? "unknown"}); the reported extrinsic is not in it`,
+      });
+      summary.flagged++;
+      return;
+    }
+
+    const plans = (await listExecutionPlans(ctx.db, intentId)).filter((p) => p.quoteId === stored.selectedQuoteId);
+    const plan = plans.find((p) => p.planId === source.details?.planId) ?? plans[0];
+    if (!plan) throw new Error("No execution plan for the selected quote");
+    const result = await ctx.chain.verifyExtrinsic({
+      blockHash: source.blockHash,
+      txHash: source.txHash,
+      expectedCallHex: plan.callHex,
+      expectedSigner: stored.intent.requester,
+    });
+    if (!result.found || !result.success || !plans.some((p) => p.callHex === result.callHex) || !result.signerMatches) {
+      await appendStatusEvent(ctx.db, intentId, {
+        status: "NEEDS_REVIEW",
+        at: now,
+        reason: "the finalized block no longer verifies as the planned, successful extrinsic",
+      });
+      summary.flagged++;
+      return;
+    }
+
+    await appendStatusEvent(ctx.db, intentId, {
+      status: "SOURCE_CONFIRMED",
+      at: now,
+      reason: `block ${source.blockNumber} is finalized and canonical`,
+      evidence: { ...source, method: "substrate_finalized_block", finalized: true, observedAt: now },
+    });
+    summary.confirmed++;
+  });
+}
+
+/** SOURCE_CONFIRMED -> DESTINATION_PENDING. Kept as its own step so the timeline shows when measurement began. */
+async function startDestinationChecks(ctx: WatcherContext, summary: PassSummary): Promise<void> {
+  const ids = await listIntentIdsByStatus(ctx.db, ["SOURCE_CONFIRMED"]);
+  summary.errors += await eachIntent(ctx, ids, "start destination check", async (intentId) => {
+    const stored = await loadIntent(ctx.db, intentId);
+    if (!stored) return;
+    const source = latestEvidence(stored.history, "source_transaction");
+    await appendStatusEvent(ctx.db, intentId, {
+      status: "DESTINATION_PENDING",
+      at: stamp(ctx, stored),
+      reason: `measuring the EVM balance of ${stored.intent.destination.recipient} across block ${source?.blockNumber}`,
+    });
+  });
+}
+
+/**
+ * DESTINATION_PENDING -> SETTLED or NEEDS_REVIEW. On V3 the destination is the same chain, so the
+ * delta is read with eth_getBalance at the inclusion block and the block before it. The block is
+ * already finalized, so the measurement is final: anything short of the expectation is flagged.
+ */
+async function measureDestinations(ctx: WatcherContext, summary: PassSummary): Promise<void> {
+  const ids = await listIntentIdsByStatus(ctx.db, ["DESTINATION_PENDING"]);
+  summary.errors += await eachIntent(ctx, ids, "measure destination", async (intentId) => {
+    const stored = await loadIntent(ctx.db, intentId);
+    const source = stored && latestEvidence(stored.history, "source_transaction");
+    if (!stored || !source?.finalized || source.blockNumber === undefined || !source.blockHash) {
+      throw new Error("DESTINATION_PENDING without finalized source evidence");
+    }
+    const quote = await selectedQuote(ctx, stored);
+    if (!quote) throw new Error("No selected quote");
+
+    const n = source.blockNumber;
+    const address = stored.intent.destination.recipient.toLowerCase() as Hex;
+    const [before, after] = await Promise.all([ctx.chain.evmBalanceAt(address, n - 1n), ctx.chain.evmBalanceAt(address, n)]);
+    const failed = !before.ok ? before : !after.ok ? after : undefined;
+    const now = stamp(ctx, stored);
+    if (failed && !failed.ok) {
+      if (failed.reason !== "state_pruned") {
+        ctx.log.warn("destination not measurable yet", { intentId, reason: failed.reason, message: failed.message });
+        return;
+      }
+      await appendStatusEvent(ctx.db, intentId, {
+        status: "NEEDS_REVIEW",
+        at: now,
+        reason: `the node discarded EVM state for block ${n} before the balance change could be measured`,
+      });
+      summary.flagged++;
+      return;
+    }
+    if (!before.ok || !after.ok) return;
+
+    const rawDelta = after.balance - before.balance;
+    const evidence: Evidence = {
+      kind: "destination_state",
+      chain: stored.intent.destination.chain,
+      method: "evm_balance_delta",
+      blockNumber: n,
+      blockHash: after.blockHash,
+      finalized: true,
+      amount: rawDelta > 0n ? rawDelta : 0n,
+      observedAt: now,
+      details: {
+        address,
+        balanceBefore: before.balance.toString(),
+        balanceAfter: after.balance.toString(),
+        rawDelta: rawDelta.toString(),
+        substrateBlockHash: source.blockHash,
+      },
+    };
+
+    const decision = assessSettlement({ intent: stored.intent, quote, destination: evidence });
+    if (decision.decision === "settled") {
+      await appendStatusEvent(ctx.db, intentId, { status: "SETTLED", at: now, reason: decision.reason, evidence, verificationMode: "destination_rpc_state" });
+      summary.settled++;
+      ctx.log.info("settled", { intentId, delta: rawDelta, expected: quote.expectedOutput });
+      return;
+    }
+    // "pending" cannot resolve later: the measured block is final.
+    const reason = decision.decision === "pending" ? `no balance increase at finalized block ${n}` : decision.reason;
+    await appendStatusEvent(ctx.db, intentId, { status: "NEEDS_REVIEW", at: now, reason, evidence });
+    summary.flagged++;
+    ctx.log.warn("flagged for review", { intentId, reason });
+  });
+}
+
+/**
+ * Expires intents nobody signed. An AWAITING_SIGNATURE intent is only expired once its deadline has
+ * passed, the longest plausible signed-transaction lifetime has elapsed since its last plan, and the
+ * scanner has covered the chain up to the finalized head, so a late inclusion cannot be missed.
+ */
+async function expireStale(ctx: WatcherContext, summary: PassSummary): Promise<void> {
+  const now = ctx.now();
+  const ids = await listIntentIdsByStatus(ctx.db, ["DRAFT", "QUOTED", "AWAITING_SIGNATURE"], 500);
+  summary.errors += await eachIntent(ctx, ids, "expire", async (intentId) => {
+    const stored = await loadIntent(ctx.db, intentId);
+    if (!stored || now < stored.intent.constraints.deadline) return;
+    const status = stored.history.at(-1)?.status;
+    let reason = "deadline passed before a route was signed";
+    if (status === "AWAITING_SIGNATURE") {
+      const lastPlan = (await listExecutionPlans(ctx.db, intentId)).at(-1);
+      const signableUntil = (lastPlan?.createdAt ?? 0) + ctx.config.signedTxLifetimeSeconds;
+      if (now < signableUntil || !summary.caughtUp) return;
+      reason = `deadline passed; finalized blocks through ${summary.scannedTo} contain no matching signed transaction`;
+    }
+    await appendStatusEvent(ctx.db, intentId, { status: "EXPIRED", at: stamp(ctx, stored), reason });
+    summary.expired++;
+  });
+}
+
+/** Writes intent and receipt hashes of settled intents to IntentRegistry, recovering from partial earlier attempts. */
+async function anchorReceipts(ctx: WatcherContext, summary: PassSummary): Promise<void> {
+  const registry = ctx.registry;
+  if (!registry) return;
+  const ids = await listSettledWithoutReceiptAnchor(ctx.db);
+  summary.errors += await eachIntent(ctx, ids, "anchor receipt", async (intentId) => {
+    const stored = await loadIntent(ctx.db, intentId);
+    const quote = stored && (await selectedQuote(ctx, stored));
+    if (!stored || !quote) throw new Error("Settled intent without a selected quote");
+    const receiptHash = hashReceipt(buildReceipt({ intent: stored.intent, intentHash: stored.intentHash, quote, history: stored.history }));
+    const routeId = keccak256(stringToBytes(quote.routeId));
+    const anchors = await listAnchors(ctx.db, intentId);
+    const anchorBase = { intentId, contractAddress: registry.address, chainId: registry.chainId };
+
+    const state = await registry.read(stored.intentHash);
+    if (state.recorder !== ZERO_ADDRESS && state.recorder !== registry.recorder) {
+      throw new Error(`Intent hash is already recorded by ${state.recorder}, not this relayer`);
+    }
+    if (state.receiptHash !== ZERO_HASH && state.receiptHash !== receiptHash) {
+      throw new Error(`Registry holds receipt ${state.receiptHash}, but the stored history hashes to ${receiptHash}`);
+    }
+
+    const recover = async (kind: "IntentRecorded" | "ReceiptRecorded") => {
+      const fromBlock = (await ctx.chain.finalizedHead()).number - EVENT_LOOKBACK_BLOCKS;
+      const tx = await registry.findEvent(kind, stored.intentHash, fromBlock > 0n ? fromBlock : 0n);
+      if (!tx) throw new Error(`Registry state shows ${kind} but no event was found in the last ${EVENT_LOOKBACK_BLOCKS} blocks`);
+      return tx;
+    };
+
+    if (!anchors.some((a) => a.step === "intent")) {
+      const tx = state.recorder === ZERO_ADDRESS ? await registry.recordIntent(stored.intentHash, routeId) : await recover("IntentRecorded");
+      await recordAnchor(ctx.db, { ...anchorBase, step: "intent", valueHash: stored.intentHash, ...tx });
+    }
+    const tx = state.receiptHash === ZERO_HASH ? await registry.recordReceipt(stored.intentHash, receiptHash) : await recover("ReceiptRecorded");
+    await recordAnchor(ctx.db, { ...anchorBase, step: "receipt", valueHash: receiptHash, ...tx });
+    summary.anchored++;
+    ctx.log.info("receipt anchored", { intentId, receiptHash, txHash: tx.txHash });
+  });
+}
+
+/** One watcher pass. Each stage reads fresh state, so passes are idempotent and safe to re-run after a crash. */
+export async function runPass(ctx: WatcherContext): Promise<PassSummary> {
+  const finalized = await ctx.chain.finalizedHead();
+  const summary: PassSummary = {
+    finalized: finalized.number,
+    scannedTo: 0n,
+    caughtUp: false,
+    found: 0,
+    confirmed: 0,
+    settled: 0,
+    flagged: 0,
+    expired: 0,
+    anchored: 0,
+    errors: 0,
+  };
+  try {
+    await scanForPlannedExtrinsics(ctx, finalized, summary);
+  } catch (error) {
+    summary.errors++;
+    ctx.log.error("source scan failed", { error });
+  }
+  await confirmSources(ctx, finalized, summary);
+  await startDestinationChecks(ctx, summary);
+  await measureDestinations(ctx, summary);
+  await expireStale(ctx, summary);
+  await anchorReceipts(ctx, summary);
+  return summary;
+}

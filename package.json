@@ -15,7 +15,8 @@
     "test:db": "node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --config vitest.db.config.ts",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
-    "db:migrate": "pnpm --filter @relaymesh/db migrate"
+    "db:migrate": "pnpm --filter @relaymesh/db migrate",
+    "worker": "pnpm --filter @relaymesh/worker start"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
