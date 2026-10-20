@@ -2,42 +2,48 @@
 
 /*
   RelayMesh tokens. Cool zinc neutrals, one cobalt accent, and status colors used only for state.
-  Shape rule: controls (inputs, buttons, badges) are 8px; panels are 12px.
+  Shape rule: controls (inputs, buttons, badges) are 8px; panels are 14px; the brand mark is 7px.
+  Shadows are tinted with the accent hue so elevation reads as part of the palette, not as grey smudge.
 */
 :root {
-  --canvas: #f5f6f8;
+  --canvas: #f4f5f8;
   --surface: #ffffff;
-  --raised: #eef0f4;
-  --line: #dde1e8;
-  --line-strong: #c5cbd5;
-  --ink: #13161c;
-  --muted: #545d6b;
+  --raised: #eef0f5;
+  --line: #e1e5ec;
+  --line-strong: #c6ccd7;
+  --ink: #12151b;
+  --muted: #535c6b;
   --accent: #2a55d4;
   --accent-hover: #2247b5;
   --accent-ink: #ffffff;
   --accent-soft: #e8eefc;
   --positive: #187a4f;
   --positive-soft: #e3f4ec;
-  --caution: #8f5a00;
+  --caution: #8a5600;
   --caution-soft: #fbf0dc;
   --critical: #b8323d;
   --critical-soft: #fbe7e9;
   --focus: #2a55d4;
+  --glow: rgb(42 85 212 / 0.09);
+  --shadow-panel: 0 1px 0 rgb(20 32 72 / 0.04), 0 1px 2px rgb(20 32 72 / 0.05), 0 12px 32px -18px rgb(28 52 130 / 0.22);
+  --shadow-lift: 0 1px 2px rgb(20 32 72 / 0.08), 0 16px 40px -20px rgb(28 52 130 / 0.32);
+  --grain-opacity: 0.035;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --canvas: #0d0f13;
+    --canvas: #0c0e12;
     --surface: #13161c;
     --raised: #1a1e26;
-    --line: #262b35;
-    --line-strong: #353c49;
+    --line: #232832;
+    --line-strong: #343b48;
     --ink: #e8ebf1;
     --muted: #9ba4b3;
     --accent: #7d9ef5;
     --accent-hover: #9bb5f8;
-    --accent-ink: #0d0f13;
+    --accent-ink: #0c0e12;
     --accent-soft: #1b2643;
     --positive: #53c592;
     --positive-soft: #11291f;
@@ -46,6 +52,10 @@
     --critical: #f0808a;
     --critical-soft: #34161a;
     --focus: #9bb5f8;
+    --glow: rgb(125 158 245 / 0.08);
+    --shadow-panel: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 16px 40px -24px rgb(0 0 0 / 0.7);
+    --shadow-lift: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 20px 48px -24px rgb(0 0 0 / 0.8);
+    --grain-opacity: 0.05;
     color-scheme: dark;
   }
 }
@@ -71,16 +81,34 @@
   --color-critical: var(--critical);
   --color-critical-soft: var(--critical-soft);
   --color-focus: var(--focus);
+  --shadow-panel: var(--shadow-panel);
+  --shadow-lift: var(--shadow-lift);
+  --ease-out: var(--ease-out);
 }
 
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
   }
   body {
-    background: var(--canvas);
+    background:
+      radial-gradient(60rem 28rem at 15% -10%, var(--glow), transparent 70%),
+      radial-gradient(40rem 22rem at 100% 0%, var(--glow), transparent 65%),
+      var(--canvas);
+    background-attachment: fixed;
     color: var(--ink);
     font-feature-settings: "ss01", "cv11";
+  }
+  /* Grain: a fixed, non-interactive layer so it never repaints with scrolling content. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: var(--grain-opacity);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   }
   :focus-visible {
     outline: 2px solid var(--focus);
@@ -89,13 +117,72 @@
   ::selection {
     background: var(--accent-soft);
   }
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
+  }
+}
+
+/* Entry: panels and new timeline events settle in. Stagger with style={{ "--i": n }}. */
+@utility enter {
+  transition:
+    opacity 320ms var(--ease-out),
+    transform 320ms var(--ease-out);
+  transition-delay: calc(var(--i, 0) * 45ms);
+  @starting-style {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Press feedback for anything clickable. */
+@utility press {
+  transition:
+    transform 160ms var(--ease-out),
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    box-shadow 150ms ease;
+  &:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+}
+
+/* Live marker for chain work in progress (a real, changing state, not decoration). */
+@keyframes live-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.55;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+@utility live-ring {
+  animation: live-ring 1.6s var(--ease-out) infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+  html {
+    scroll-behavior: auto;
+  }
+  /* Keep opacity changes that help comprehension; drop movement and looping motion. */
+  .enter {
+    transform: none !important;
+    transition-property: opacity;
+  }
+  .press:active {
+    transform: none !important;
+  }
+  .live-ring,
+  .animate-spin,
+  .animate-pulse {
+    animation: none !important;
   }
 }

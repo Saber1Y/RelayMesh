@@ -118,9 +118,9 @@ export function SignPanel({
   }
 
   return (
-    <Panel title="Review and sign">
+    <Panel title="Review and sign" description="Check the call below. Your wallet will ask you to sign exactly these bytes." index={2}>
       <div className="grid gap-6">
-        <dl className="grid gap-4 text-sm sm:grid-cols-2">
+        <dl className="grid gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
           <div className="grid gap-1">
             <dt className="text-muted">Signer</dt>
             <dd>
@@ -146,13 +146,13 @@ export function SignPanel({
           </div>
         </dl>
 
-        <div className="grid gap-3 rounded-lg bg-raised p-4">
+        <div className="grid gap-3 rounded-xl border border-line bg-raised/60 p-4">
           <p className="text-sm font-medium">Call your wallet will sign</p>
           {decoded.state === "loading" && <Skeleton className="h-14" />}
           {decoded.state === "error" && <p className="text-sm text-critical">Could not decode the call: {decoded.message}</p>}
           {decoded.state === "ok" && (
             <>
-              <Mono className="break-all">
+              <Mono className="block rounded-lg bg-surface px-3 py-2.5 text-[12.5px] leading-relaxed break-all shadow-[0_1px_0_rgb(20_32_72/0.03)]">
                 {decoded.call.section}.{decoded.call.method}({Object.entries(decoded.call.args).map(([k, v], i) => `${i ? ", " : ""}${k}: ${v}`)})
               </Mono>
               <p className={`flex items-start gap-2 text-sm ${check?.ok ? "text-positive" : "text-critical"}`}>
@@ -167,7 +167,7 @@ export function SignPanel({
           <p className="rounded-lg bg-caution-soft px-3 py-2 text-sm text-caution">This signing window closed. Refresh quotes above to get a new route.</p>
         ) : (
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={sign} disabled={busy || !check?.ok}>
+            <Button onClick={sign} disabled={busy || !check?.ok} className="px-5 py-2.5">
               <PenNib size={16} />
               {busy ? PHASE_LABEL[phase.kind] : "Sign in wallet"}
             </Button>

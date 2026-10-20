@@ -2,6 +2,7 @@ import { ArrowSquareOut } from "@phosphor-icons/react/dist/ssr";
 import type { StatusEvent } from "@relaymesh/core";
 import type { Wire } from "@/lib/api";
 import { explorerBlockUrl, formatTime, shortHash, STATUS_META } from "@/lib/format";
+import { CopyButton } from "./copy-button";
 import { Mono, Panel } from "./ui";
 
 const TONE_RING: Record<string, string> = {
@@ -15,14 +16,14 @@ const TONE_RING: Record<string, string> = {
 /** Append-only status history, oldest first, with the evidence recorded at each step. */
 export function Timeline({ history, wsUrl }: { history: Wire<StatusEvent>[]; wsUrl: string }) {
   return (
-    <Panel title="Timeline">
+    <Panel title="Timeline" description="Append-only. Every step keeps its evidence." index={2}>
       <ol className="grid">
         {history.map((event, i) => {
           const meta = STATUS_META[event.status];
           const last = i === history.length - 1;
           const e = event.evidence;
           return (
-            <li key={event.seq} className="relative grid grid-cols-[1rem_minmax(0,1fr)] gap-3 pb-5 last:pb-0">
+            <li key={event.seq} className="enter relative grid grid-cols-[1rem_minmax(0,1fr)] gap-3 pb-5 last:pb-0">
               {!last && <span className="absolute top-4 bottom-0 left-[7px] w-px bg-line" aria-hidden />}
               <span className={`mt-1 h-[15px] w-[15px] rounded-full border-2 ${TONE_RING[meta.tone]}`} aria-hidden />
               <div className="grid gap-1">
@@ -32,16 +33,19 @@ export function Timeline({ history, wsUrl }: { history: Wire<StatusEvent>[]; wsU
                     {formatTime(event.at)}
                   </time>
                 </div>
-                <p className="text-sm leading-relaxed text-muted">{event.reason}</p>
+                <p className="text-sm leading-relaxed break-words text-muted">{event.reason}</p>
                 {e && (
                   <dl className="mt-1 grid gap-1 text-xs">
                     {e.txHash && (
                       <div className="flex gap-2">
                         <dt className="text-muted">Tx</dt>
                         <dd>
-                          <Mono className="text-xs" title={e.txHash}>
-                            {shortHash(e.txHash, 10, 6)}
-                          </Mono>
+                          <span className="inline-flex items-center gap-0.5">
+                            <Mono className="text-xs" title={e.txHash}>
+                              {shortHash(e.txHash, 10, 6)}
+                            </Mono>
+                            <CopyButton value={e.txHash} label="Copy transaction hash" />
+                          </span>
                         </dd>
                       </div>
                     )}

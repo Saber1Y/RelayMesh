@@ -1,3 +1,4 @@
+import { CheckCircle, CircleDashed, MinusCircle, XCircle } from "@phosphor-icons/react/dist/ssr";
 import type { ReactNode } from "react";
 import { formatAmount, shortHash } from "@/lib/format";
 import type { WireView } from "./intent-workspace";
@@ -54,7 +55,7 @@ export function SettlementPanel({ view }: { view: WireView }) {
   ];
 
   return (
-    <Panel title="Settlement">
+    <Panel title="Settlement" description="What has been proven so far, read directly from PortalDot V3." index={1}>
       <div className="grid gap-5">
         {failed && (
           <p className="rounded-lg bg-critical-soft px-3 py-2 text-sm text-critical">{view.history.at(-1)?.reason ?? "The source transaction failed."}</p>
@@ -66,16 +67,27 @@ export function SettlementPanel({ view }: { view: WireView }) {
         )}
         <ol className="grid gap-4">
           {checks.map((c) => (
-            <li key={c.title} className="grid gap-1">
+            <li key={c.title} className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-3">
+              <StateIcon state={c.state} />
+              <div className="grid gap-1">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <span className="text-sm font-medium">{c.title}</span>
                 <span className={`text-sm ${STATE_TEXT[c.state].className}`}>{STATE_TEXT[c.state].label}</span>
               </div>
               <p className="text-sm leading-relaxed text-muted">{c.detail}</p>
+              </div>
             </li>
           ))}
         </ol>
       </div>
     </Panel>
   );
+}
+
+function StateIcon({ state }: { state: CheckState }) {
+  const common = { size: 20, className: "mt-px" } as const;
+  if (state === "done") return <CheckCircle {...common} weight="fill" className="mt-px text-positive" />;
+  if (state === "failed") return <XCircle {...common} weight="fill" className="mt-px text-critical" />;
+  if (state === "skipped") return <MinusCircle {...common} className="mt-px text-muted" />;
+  return <CircleDashed {...common} className="mt-px animate-spin text-caution [animation-duration:3s]" />;
 }

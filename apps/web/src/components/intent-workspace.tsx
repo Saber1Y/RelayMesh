@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Receipt } from "@phosphor-icons/react";
+import { ArrowLeft, ArrowRight, Receipt } from "@phosphor-icons/react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { ApiRequestError, apiFetch, type Wire } from "@/lib/api";
@@ -11,7 +11,9 @@ import { QuotesPanel, type Rejection } from "./quotes-panel";
 import { SettlementPanel } from "./settlement-panel";
 import { SignPanel } from "./sign-panel";
 import { Timeline } from "./timeline";
-import { Badge, Mono } from "./ui";
+import { CopyButton } from "./copy-button";
+import { Lifecycle } from "./lifecycle";
+import { Badge, Mono, stagger } from "./ui";
 
 export type WireView = Wire<IntentView>;
 
@@ -55,45 +57,56 @@ export function IntentWorkspace({
 
   return (
     <div className="grid gap-8">
-      <div className="grid gap-4">
-        <Link href="/" className="inline-flex w-fit items-center gap-1.5 text-sm text-muted hover:text-ink">
+      <div className="enter grid gap-6" style={stagger(0)}>
+        <Link href="/" className="press inline-flex w-fit items-center gap-1.5 rounded-md text-sm text-muted hover:text-ink">
           <ArrowLeft size={14} />
           New intent
         </Link>
-        <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-4">
           <div className="grid gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-              {formatAmount(intent.source.amount, intent.source.chain)} to <Mono className="text-[0.9em]">{shortHash(intent.destination.recipient)}</Mono>
-            </h1>
-            <p className="text-sm text-muted">
-              From <Mono title={intent.requester}>{shortHash(intent.requester, 8, 6)}</Mono> on PortalDot V3
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Badge tone={meta.tone}>{meta.label}</Badge>
+              <span className="text-sm text-muted">{meta.description}</span>
+            </div>
+            <h1 className="text-4xl font-semibold tracking-[-0.035em] tabular-nums sm:text-5xl">{formatAmount(intent.source.amount, intent.source.chain)}</h1>
+            <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm text-muted">
+              <span>From</span>
+              <span className="inline-flex items-center gap-0.5 text-ink">
+                <Mono title={intent.requester}>{shortHash(intent.requester, 8, 6)}</Mono>
+                <CopyButton value={intent.requester} label="Copy source address" />
+              </span>
+              <ArrowRight size={14} aria-label="to" />
+              <span className="inline-flex items-center gap-0.5 text-ink">
+                <Mono title={intent.destination.recipient}>{shortHash(intent.destination.recipient, 8, 6)}</Mono>
+                <CopyButton value={intent.destination.recipient} label="Copy recipient address" />
+              </span>
+              <span>on PortalDot V3</span>
             </p>
           </div>
-          <div className="grid justify-items-start gap-1.5 sm:justify-items-end">
-            <Badge tone={meta.tone}>{meta.label}</Badge>
-            <p className="text-sm text-muted">{meta.description}</p>
-          </div>
-        </div>
-        <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
-          <div className="flex gap-2">
+          <dl className="grid grid-cols-[auto_auto] gap-x-4 gap-y-1 text-[13px]">
             <dt className="text-muted">Intent</dt>
-            <dd>
-              <Mono title={view.intent.intentId}>{shortHash(view.intent.intentId, 10, 6)}</Mono>
+            <dd className="flex items-center gap-1">
+              <Mono className="text-[12px]" title={intent.intentId}>
+                {shortHash(intent.intentId, 10, 6)}
+              </Mono>
+              <CopyButton value={intent.intentId} label="Copy intent ID" />
             </dd>
-          </div>
-          <div className="flex gap-2">
             <dt className="text-muted">Hash</dt>
-            <dd>
-              <Mono title={view.intentHash}>{shortHash(view.intentHash, 10, 6)}</Mono>
+            <dd className="flex items-center gap-1">
+              <Mono className="text-[12px]" title={view.intentHash}>
+                {shortHash(view.intentHash, 10, 6)}
+              </Mono>
+              <CopyButton value={view.intentHash} label="Copy intent hash" />
             </dd>
-          </div>
-          {preSource && (
-            <div className="flex gap-2">
-              <dt className="text-muted">Deadline</dt>
-              <dd className={deadlineLeft <= 60 ? "text-critical" : ""}>{deadlineLeft > 0 ? `${formatDuration(deadlineLeft)} left` : "passed"}</dd>
-            </div>
-          )}
-        </dl>
+            {preSource && (
+              <>
+                <dt className="text-muted">Deadline</dt>
+                <dd className={`tabular-nums ${deadlineLeft <= 60 ? "text-critical" : ""}`}>{deadlineLeft > 0 ? `${formatDuration(deadlineLeft)} left` : "passed"}</dd>
+              </>
+            )}
+          </dl>
+        </div>
+        <Lifecycle statuses={view.history.map((e) => e.status)} />
         {refreshError && (
           <p role="status" className="rounded-lg bg-caution-soft px-3 py-2 text-sm text-caution">
             {refreshError} Retrying automatically.
@@ -120,12 +133,13 @@ export function IntentWorkspace({
           {!preSource && <SettlementPanel view={view} />}
         </div>
 
-        <aside className="grid content-start gap-6">
+        <aside className="grid content-start gap-4">
           <Timeline history={view.history} wsUrl={wsUrl} />
           {view.selectedQuoteId && (
             <Link
               href={`/intents/${intent.intentId}/receipt`}
-              className="inline-flex items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface px-4 py-2 text-sm font-medium transition-colors hover:bg-raised"
+              className="press enter inline-flex items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface px-4 py-2.5 text-sm font-medium shadow-panel hover:bg-raised"
+              style={stagger(3)}
             >
               <Receipt size={16} />
               {status === "SETTLED" ? "View receipt" : "View receipt so far"}

@@ -1,13 +1,13 @@
 "use client";
 
-import { ArrowRight, Wallet } from "@phosphor-icons/react";
+import { ArrowRight, CaretDown, Wallet } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { normalizeAddress, parseDecimalAmount } from "@relaymesh/core";
 import { ApiRequestError, apiFetch } from "@/lib/api";
 import { shortHash } from "@/lib/format";
 import { connectWallets, type WalletAccount } from "@/lib/wallet";
-import { Button, Field, inputClass } from "./ui";
+import { Button, Field, inputClass, stagger } from "./ui";
 
 type WalletState =
   | { status: "idle" }
@@ -153,9 +153,9 @@ export function IntentForm() {
   const describedBy = (name: FieldName) => (errors[name] ? `${fid(name)}-error` : `${fid(name)}-help`);
 
   return (
-    <form onSubmit={onSubmit} noValidate className="grid content-start gap-6 rounded-xl border border-line bg-surface p-5 sm:p-6">
+    <form onSubmit={onSubmit} noValidate className="enter grid content-start gap-6 rounded-[14px] border border-line bg-surface p-5 shadow-lift sm:p-7" style={stagger(1)}>
       <div className="grid gap-1">
-        <h2 className="text-lg font-semibold tracking-tight">New transfer intent</h2>
+        <h2 className="text-lg font-semibold tracking-[-0.02em]">New transfer intent</h2>
         <p className="text-sm text-muted">Substrate account to EVM address, both on PortalDot V3.</p>
       </div>
 
@@ -165,14 +165,14 @@ export function IntentForm() {
             From
           </span>
           {wallet.status === "connected" && substrateAccounts.length > 0 && (
-            <button type="button" className="text-sm text-accent hover:underline" onClick={() => setManualSource((m) => !m)}>
+            <button type="button" className="press rounded-md px-1 text-sm text-accent hover:bg-accent-soft" onClick={() => setManualSource((m) => !m)}>
               {manualSource ? "Pick from wallet" : "Enter an address instead"}
             </button>
           )}
         </div>
 
         {wallet.status !== "connected" && !manualSource && (
-          <div className="grid gap-3 rounded-lg border border-dashed border-line-strong p-4">
+          <div className="grid gap-3 rounded-xl bg-raised/70 p-4">
             <p className="text-sm text-muted">Connect Talisman, SubWallet or the polkadot.js extension to send from your account.</p>
             <div className="flex flex-wrap gap-2">
               <Button onClick={connect} disabled={wallet.status === "connecting"}>
@@ -255,7 +255,7 @@ export function IntentForm() {
                 key={a.address}
                 type="button"
                 onClick={() => setRecipient(a.address)}
-                className="rounded-lg border border-line px-2 py-1 text-xs text-muted transition-colors hover:border-accent hover:text-accent"
+                className="press rounded-lg border border-line bg-surface px-2 py-1 text-xs text-muted hover:border-accent/50 hover:text-accent"
               >
                 {a.name ?? "EVM account"} <span className="font-mono">{shortHash(a.address)}</span>
               </button>
@@ -271,7 +271,7 @@ export function IntentForm() {
               id={fid("amount")}
               aria-invalid={!!errors.amount}
               aria-describedby={describedBy("amount")}
-              className={`${inputClass} pr-14 font-mono`}
+              className={`${inputClass} pr-14 font-mono text-base tabular-nums`}
               inputMode="decimal"
               placeholder="1.0"
               autoComplete="off"
@@ -284,11 +284,11 @@ export function IntentForm() {
 
         <fieldset className="grid gap-2">
           <legend className="mb-2 text-sm font-medium">Deadline</legend>
-          <div className="inline-flex w-fit rounded-lg border border-line-strong p-0.5">
+          <div className="inline-flex w-fit rounded-lg border border-line-strong bg-surface p-0.5">
             {DEADLINES.map((m) => (
               <label key={m} className="cursor-pointer">
                 <input type="radio" name={fid("deadline")} value={m} checked={deadlineMinutes === m} onChange={() => setDeadlineMinutes(m)} className="peer sr-only" />
-                <span className="block rounded-md px-3 py-1.5 text-sm text-muted transition-colors peer-checked:bg-accent-soft peer-checked:font-medium peer-checked:text-accent peer-focus-visible:outline-2 peer-focus-visible:outline-focus">
+                <span className="block rounded-md px-3 py-2 text-sm text-muted transition-colors duration-150 hover:text-ink peer-checked:bg-accent-soft peer-checked:font-medium peer-checked:text-accent peer-focus-visible:outline-2 peer-focus-visible:outline-focus">
                   {m} min
                 </span>
               </label>
@@ -298,9 +298,12 @@ export function IntentForm() {
         </fieldset>
       </div>
 
-      <details className="group rounded-lg border border-line">
-        <summary className="cursor-pointer list-none px-4 py-3 text-sm font-medium marker:hidden">
-          Limits <span className="font-normal text-muted">(optional)</span>
+      <details className="group rounded-xl border border-line">
+        <summary className="flex cursor-pointer list-none items-center justify-between rounded-xl px-4 py-3 text-sm font-medium transition-colors marker:hidden hover:bg-raised/60 [&::-webkit-details-marker]:hidden">
+          <span>
+            Limits <span className="font-normal text-muted">(optional)</span>
+          </span>
+          <CaretDown size={14} className="text-muted transition-transform duration-200 group-open:rotate-180" />
         </summary>
         <div className="grid gap-5 border-t border-line p-4 sm:grid-cols-2">
           <Field label="Minimum received" htmlFor={fid("minReceived")} error={errors.minReceived} help="tPOT on the EVM side. Quotes below this are refused.">
@@ -336,9 +339,9 @@ export function IntentForm() {
         </p>
       )}
 
-      <Button type="submit" disabled={submitting} className="w-full py-2.5">
+      <Button type="submit" disabled={submitting} className="w-full py-3 text-[15px]">
         {submitting ? "Creating intent and quoting" : "Get quotes"}
-        {!submitting && <ArrowRight size={16} />}
+        {!submitting && <ArrowRight size={16} className="transition-transform duration-200 group-hover:translate-x-0.5" />}
       </Button>
     </form>
   );

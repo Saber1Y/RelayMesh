@@ -1,12 +1,12 @@
 "use client";
 
-import { ArrowsClockwise } from "@phosphor-icons/react";
+import { ArrowRight, ArrowsClockwise } from "@phosphor-icons/react";
 import { useState } from "react";
 import { ApiRequestError, apiFetch, type Wire } from "@/lib/api";
 import { formatAmount, formatDuration } from "@/lib/format";
 import { convertDecimals, getAsset, type Quote } from "@relaymesh/core";
 import type { WireView } from "./intent-workspace";
-import { Badge, Button, Mono, Panel, Skeleton } from "./ui";
+import { Badge, Button, Mono, Panel, Skeleton, Stat, stagger } from "./ui";
 
 export interface Rejection {
   provider: string;
@@ -82,8 +82,10 @@ export function QuotesPanel({
   return (
     <Panel
       title="Routes"
+      description="Quotes hold for 60 seconds so fees and balances stay current."
+      index={1}
       action={
-        <Button variant="ghost" onClick={refresh} disabled={quoting} className="-my-1 px-2.5 py-1">
+        <Button variant="ghost" onClick={refresh} disabled={quoting} className="-my-1 -ml-2.5 px-2.5 py-1 sm:-mr-2 sm:ml-0">
           <ArrowsClockwise size={15} className={quoting ? "animate-spin" : ""} />
           {quoting ? "Quoting" : "Refresh quotes"}
         </Button>
@@ -92,17 +94,17 @@ export function QuotesPanel({
       <div className="grid gap-5">
         {quoting && live.length === 0 && (
           <div className="grid gap-3" aria-label="Loading quotes">
-            <Skeleton className="h-[88px]" />
+            <Skeleton className="h-[148px] rounded-xl" />
           </div>
         )}
 
         {!quoting && live.length === 0 && (
-          <div className="grid gap-2 rounded-lg border border-dashed border-line-strong p-5 text-sm">
+          <div className="grid gap-2 rounded-xl bg-raised/70 p-5 text-sm">
             <p className="font-medium">{view.quotes.length === 0 ? "No quotes yet" : "Quotes expired"}</p>
             <p className="text-muted">
               {view.quotes.length === 0
                 ? "Ask the configured providers for a route. Any provider that cannot quote is listed below with its reason."
-                : "Quotes are valid for 60 seconds so fees and balances stay current. Refresh to get new ones."}
+                : "Refresh for a new quote with current fees and balances."}
             </p>
           </div>
         )}
@@ -113,40 +115,44 @@ export function QuotesPanel({
               const fee = q.fees.find((f) => f.chain === view.intent.source.chain);
               const selected = view.selectedQuoteId === q.quoteId;
               return (
-                <li key={q.quoteId} className={`grid gap-4 rounded-lg border p-4 ${selected ? "border-accent" : "border-line"}`}>
+                <li
+                  key={q.quoteId}
+                  className={`enter relative grid gap-5 overflow-hidden rounded-xl border p-4 sm:p-5 ${selected ? "border-accent/60 bg-accent-soft/30" : "border-line"}`}
+                  style={stagger(index)}
+                >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium">{PROVIDER_NAMES[q.provider] ?? q.provider}</span>
                       {index === 0 && live.length > 1 && <Badge tone="accent">Best</Badge>}
                       {selected && <Badge tone="accent">Selected</Badge>}
                     </div>
-                    <span className={`text-sm ${q.expiresAt - now <= 15 ? "text-critical" : "text-muted"}`}>Expires in {formatDuration(q.expiresAt - now)}</span>
+                    <span className={`text-[13px] tabular-nums ${q.expiresAt - now <= 15 ? "text-critical" : "text-muted"}`}>
+                      Expires in {formatDuration(q.expiresAt - now)}
+                    </span>
                   </div>
-                  <dl className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-3">
-                    <div className="grid gap-1">
-                      <dt className="text-muted">You receive</dt>
-                      <dd>
-                        <Mono>{formatAmount(q.expectedOutput, view.intent.destination.chain)}</Mono>
-                      </dd>
-                    </div>
-                    <div className="grid gap-1">
-                      <dt className="text-muted">Network fee</dt>
-                      <dd>
-                        <Mono>{fee ? formatAmount(fee.amount, fee.chain) : "None reported"}</Mono>
-                        {fee?.basis === "estimate" && <span className="ml-1 text-muted">est.</span>}
-                      </dd>
-                    </div>
-                    <div className="grid gap-1">
-                      <dt className="text-muted">Time to finality</dt>
-                      <dd>{q.estimatedSeconds ? `about ${q.estimatedSeconds}s` : "Not reported"}</dd>
-                    </div>
+                  <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]">
+                    <Stat label="You receive on the EVM side" emphasis>
+                      {formatAmount(q.expectedOutput, view.intent.destination.chain)}
+                    </Stat>
+                    <Stat label="Network fee">
+                      <Mono>{fee ? formatAmount(fee.amount, fee.chain) : "None reported"}</Mono>
+                      {fee?.basis === "estimate" && <span className="ml-1 text-muted">est.</span>}
+                    </Stat>
+                    <Stat label="Time to finality">{q.estimatedSeconds ? `about ${q.estimatedSeconds}s` : "Not reported"}</Stat>
                   </dl>
                   <HeldBack view={view} expectedOutput={q.expectedOutput} />
                   {canSelect && (
                     <Button onClick={() => select(q.quoteId)} disabled={!!selecting} className="justify-self-start">
                       {selecting === q.quoteId ? "Checking chain state" : "Review this route"}
+                      {selecting !== q.quoteId && <ArrowRight size={15} className="transition-transform duration-200 group-hover:translate-x-0.5" />}
                     </Button>
                   )}
+                  <span className="absolute inset-x-0 bottom-0 h-0.5 bg-line" aria-hidden>
+                    <span
+                      className="block h-full origin-left bg-accent/60 transition-transform duration-1000 ease-linear"
+                      style={{ transform: `scaleX(${Math.max(0, Math.min(1, (q.expiresAt - now) / (q.expiresAt - q.retrievedAt)))})` }}
+                    />
+                  </span>
                 </li>
               );
             })}
@@ -157,10 +163,10 @@ export function QuotesPanel({
 
         {shownRejections.length > 0 && (
           <div className="grid gap-2">
-            <h3 className="text-sm font-medium">Not quoting</h3>
+            <h3 className="text-[13px] font-medium text-muted">Not quoting</h3>
             <ul className="grid gap-2">
               {shownRejections.map((r) => (
-                <li key={r.provider + r.code} className="grid gap-1 rounded-lg bg-raised px-4 py-3 text-sm">
+                <li key={r.provider + r.code} className="grid gap-1 rounded-xl bg-raised/70 px-4 py-3 text-sm">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{PROVIDER_NAMES[r.provider] ?? r.provider}</span>
                     <Badge tone={r.code === "PROVIDER_UNAVAILABLE" ? "neutral" : "caution"}>{REJECTION_TEXT[r.code] ?? r.code}</Badge>
