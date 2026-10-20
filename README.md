@@ -68,18 +68,21 @@ cd RelayMesh
 pnpm worker  # settlement watcher
 ```
 
-Open http://localhost:3010, connect Talisman (or enter any PortalDot address to preview quotes without signing), enter an EVM address and an amount, and press Get quotes.
+Open http://localhost:3010 for the landing page, then press Launch desk (or go straight to http://localhost:3010/desk).
+Connect Talisman (or enter any PortalDot address to preview quotes without signing), enter an EVM address and an amount, and press Get quotes.
 The quote, fee and destination account come from the live PortalDot V3 testnet.
 
 ## Screenshots
 
-![New intent form with the live route list, showing the V3 native transfer as available and iBridge as unavailable with its reason](docs/screenshots/new-intent.png)
+![Landing page: headline, Launch desk call to action, and the latest settled transfer rendered as a live settlement log read from the database](docs/screenshots/landing.png)
 
-![Intent page with a live quote: 2.4 tPOT received for 2.5 tPOT sent, a network fee estimate from payment_queryInfo, the existential deposit explanation, and the timeline](docs/screenshots/quotes.png)
+![Routing desk: the transfer form beside a live ledger of settled and in-flight intents, route status with iBridge unavailable and its reason, and recent intents](docs/screenshots/new-intent.png)
+
+![Intent page with a live quote: 2.4 tPOT received for 2.5 tPOT sent, a network fee estimate from payment_queryInfo, the lifecycle stepper and the settlement log](docs/screenshots/quotes.png)
 
 ![Review and sign panel: the call decoded in the browser from PortalDot V3 metadata, checked against the intent before the sign button is enabled](docs/screenshots/review.png)
 
-![Settlement receipt with source and destination legs, intent and receipt hashes, and the full timeline](docs/screenshots/receipt.png)
+![Settlement receipt for the real transfer settled in block #122911: 1 tPOT sent, 0.9 tPOT observed on the EVM side, both legs finalized, intent and receipt hashes](docs/screenshots/receipt.png)
 
 ## The one rule
 
@@ -360,7 +363,7 @@ pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
 
 ## The one-flow demo
 
-1. Open http://localhost:3010 and connect Talisman with a funded PortalDot V3 account.
+1. Open http://localhost:3010, press Launch desk, and connect Talisman with a funded PortalDot V3 account.
 2. Enter an EVM address you control, 1 tPOT, and a 10 minute deadline, then press Get quotes.
 3. Review the route: expected EVM-side amount, fee estimate, and the iBridge rejection reason.
 4. Press Review this route and check the call your browser decoded.
