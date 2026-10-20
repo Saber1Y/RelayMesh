@@ -8,8 +8,12 @@ import type { ExecutionPlan, ProviderStatus, QuoteContext, QuoteResult, RoutePro
 export const V3_SUBSTRATE_TO_EVM_PROVIDER_ID = "portaldot-v3-native";
 export const V3_SUBSTRATE_TO_EVM_ROUTE_ID = "v3-substrate-to-evm";
 
-/** Quotes are re-checked at signing time; a short life keeps the fee estimate and balances honest. */
-export const QUOTE_TTL_SECONDS = 60;
+/**
+ * How long a quote may be selected and signed. It must cover reading the quote, the browser decoding
+ * the call (slow on a first visit) and approving in the wallet. Safety does not depend on it being
+ * short: chain state is re-read before a plan is issued, and settlement measures what actually arrived.
+ */
+export const QUOTE_TTL_SECONDS = 120;
 
 /**
  * Inclusion plus GRANDPA finality. On 2026-10-20 finality trailed the best block by about 2 blocks,
