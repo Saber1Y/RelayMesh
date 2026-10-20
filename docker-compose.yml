@@ -1,0 +1,21 @@
+# Local development database. Not used in production.
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_USER: relaymesh
+      POSTGRES_PASSWORD: relaymesh
+      POSTGRES_DB: relaymesh
+    ports:
+      - "127.0.0.1:54329:5432"
+    volumes:
+      - relaymesh-pg:/var/lib/postgresql/data
+      - ./packages/db/docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U relaymesh -d relaymesh"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  relaymesh-pg:

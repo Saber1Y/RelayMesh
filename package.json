@@ -11,7 +11,11 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "vitest run",
     "spike:substrate": "pnpm --filter @relaymesh/chains spike:substrate",
-    "spike:mapping": "pnpm --filter @relaymesh/chains spike:mapping"
+    "spike:mapping": "pnpm --filter @relaymesh/chains spike:mapping",
+    "test:db": "node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --config vitest.db.config.ts",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
+    "db:migrate": "pnpm --filter @relaymesh/db migrate"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
