@@ -4,3 +4,4 @@ export * from "./revive-address";
 export * from "./substrate";
 export * from "./v3-native-client";
 export * from "./substrate-verify";
+export * from "./v3-chain-reader";
