@@ -129,3 +129,36 @@ Requester: the public sudo account. Amount: 1 tPOT.
 
 The plan's `callHex` decodes on-chain metadata to `balances.transferKeepAlive` with the fallback account and `100000000000000` base units.
 Nothing was signed or submitted.
+
+## 2026-10-20: Web app
+
+### `apps/web` (Next.js 16, React 19, Tailwind 4)
+
+- Pages: intent form (`/`), intent workspace (`/intents/[id]`) and receipt (`/intents/[id]/receipt`).
+- API: create intent (requires `Idempotency-Key`), read intent, quote, select route (returns the unsigned plan), report source inclusion, receipt JSON, provider status.
+- Signing uses `@polkadot/extension-dapp` (Talisman, SubWallet, polkadot.js). The browser decodes the plan's call bytes from live V3 metadata and checks section, method, amount and destination against the intent before enabling the sign button.
+- The server never trusts the browser's inclusion report: `verifySubstrateExtrinsic` reads the block from the node and requires the extrinsic to be the stored plan's exact call, signed by the requester. Plans are stored append-only in `execution_plans`.
+- Times are shown in UTC so server and client render identically.
+
+### Verified on 2026-10-20 against the live V3 testnet (no wallet, watch-only)
+
+| Check | Result |
+| --- | --- |
+| Create intent, replay same key, same key with different body, missing key | 201, 200 replayed, 409 conflict, 400 |
+| Quote | Real fee from `payment_queryInfo`; iBridge listed as unavailable |
+| Select route | Plan stored; call decoded in the browser matches the intent |
+| Report a fake block hash | 422 `SOURCE_NOT_FOUND`, status unchanged |
+| Report a real extrinsic from a real block that is not the user's | 422 `SOURCE_MISMATCH`, status unchanged |
+| Expired signing window, re-quote, re-select | Works; timeline records each step |
+| Sign without a wallet extension | Clear error, nothing recorded |
+| Receipt download | `keccak256("relaymesh.receipt.v1\n" + file)` equals `X-Receipt-Hash` |
+| Light, dark and 375px mobile | No horizontal overflow; form shown before routes on mobile |
+
+Not yet verified: an actual signed transfer, because no tPOT has been received yet.
+After signing, intents stay at "In block" until the watcher (next task) confirms finality and measures the destination balance.
+
+### Build notes
+
+- Turbopack does not map NodeNext-style `./x.js` imports to `.ts` sources, so all packages now use `moduleResolution: Bundler` with extensionless relative imports.
+- `runMigrations` moved to `@relaymesh/db/src/migrate.ts` so app bundles never try to resolve the SQL folder.
+- `next.config.ts` force-reloads the repository-root `.env`, because `@next/env` caches the env it loaded for `apps/web`.
