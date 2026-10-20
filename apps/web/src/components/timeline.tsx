@@ -53,7 +53,7 @@ export function Timeline({ history, wsUrl }: { history: Wire<StatusEvent>[]; wsU
                       <div className="flex gap-2">
                         <dt className="text-muted">Block</dt>
                         <dd>
-                          <a href={explorerBlockUrl(wsUrl, e.blockHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+                          <a href={explorerBlockUrl(wsUrl, e.blockNumber ?? e.blockHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
                             <Mono className="text-xs">{e.blockNumber ? `#${e.blockNumber}` : shortHash(e.blockHash)}</Mono>
                             <ArrowSquareOut size={12} />
                           </a>

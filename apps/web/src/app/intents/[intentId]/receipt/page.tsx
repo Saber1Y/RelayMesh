@@ -30,7 +30,7 @@ function LegRows({ leg, wsUrl }: { leg: ReceiptLeg; wsUrl: string }) {
       <Row label="Block" compact>
         {leg.blockHash ? (
           <span className="inline-flex items-center gap-1">
-            <a href={explorerBlockUrl(wsUrl, leg.blockHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+            <a href={explorerBlockUrl(wsUrl, leg.blockNumber ?? leg.blockHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
               <Mono>{leg.blockNumber !== null ? `#${leg.blockNumber}` : shortHash(leg.blockHash)}</Mono>
               <ArrowSquareOut size={12} />
             </a>
