@@ -6,7 +6,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "compile": "tsx scripts/compile.ts",
-    "simulate-deploy": "tsx --env-file-if-exists=../.env scripts/simulate-deploy.ts"
+    "simulate-deploy": "tsx --env-file-if-exists=../.env scripts/simulate-deploy.ts",
+    "deploy:registry": "tsx --env-file-if-exists=../.env scripts/deploy.ts"
   },
   "dependencies": {
     "@relaymesh/chains": "workspace:*",
@@ -14,5 +15,8 @@
   },
   "devDependencies": {
     "solc": "0.8.37"
+  },
+  "exports": {
+    "./abi/IntentRegistry": "./abi/IntentRegistry.ts"
   }
 }
