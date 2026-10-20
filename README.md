@@ -107,7 +107,7 @@ Amounts are integer base units end to end, so no value ever passes through a Jav
 `collectQuotes` asks every route provider in parallel, ranks quotes deterministically, and returns every provider that could not quote with its reason.
 
 ```text
-portaldot-v3-native   expected 2.4 tPOT (EVM side)   fee ~0.0149 tPOT (payment_queryInfo)   expires 60s
+portaldot-v3-native   expected 2.4 tPOT (EVM side)   fee ~0.0149 tPOT (payment_queryInfo)   expires 120s
 portaldot-ibridge     PROVIDER_UNAVAILABLE: no public SDK, API or contract interface; no bridge pallet in the V3 runtime
 ```
 
@@ -243,7 +243,7 @@ The full diagrams, including the state machine and a sequence diagram, are in [d
 | Short or missing deliveries are not hidden | The watcher records the measurement and moves the intent to `NEEDS_REVIEW` |
 | History cannot be rewritten | Database triggers block updates and deletes on evidence tables; loads replay the full history |
 | Retries cannot double-create intents | Idempotency keys with a request hash; 5 concurrent requests create exactly one intent in tests |
-| Stale quotes cannot be signed | Quotes live 60 seconds and are re-checked against live state before a plan is issued |
+| Stale quotes cannot be signed | Quotes live 120 seconds and are re-checked against live state before a plan is issued |
 | Unsigned intents expire safely | Only after the deadline, the signed-transaction lifetime, and a full scan of finalized blocks |
 
 ## How it uses PortalDot V3

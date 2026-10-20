@@ -190,3 +190,17 @@ After signing, intents stay at "In block" until the watcher (next task) confirms
 - No real signed transfer has gone through yet (no tPOT), so `SETTLED` has only been reached in tests.
 - `IntentRegistry` is not deployed (needs about 96 tPOT). Anchoring is disabled until `INTENT_REGISTRY_ADDRESS` and `RELAYER_PRIVATE_KEY` are set; `pnpm --filter @relaymesh/contracts deploy:registry` deploys and verifies the code.
 - The contract field `requester` was renamed `recorder`, because the account that anchors is the RelayMesh relayer, not the user.
+
+## 2026-10-20: Faster in-browser call decoding
+
+A first real signing attempt stalled: the "Call your wallet will sign" box stayed on its loading placeholder, so the sign button stayed disabled while the 60-second quote ran down.
+The cause is the browser's own connection to V3, which downloads about 1.3 MB of chain metadata before it can decode the call, on a node that was answering slowly at the time.
+
+Changes:
+
+- The browser caches the metadata it downloaded from the V3 node in local storage, keyed by genesis hash and runtime version. polkadot.js only uses it when the key matches what the node reports, so a runtime upgrade misses the cache. Metadata is never taken from the RelayMesh server, which keeps the in-browser check independent of the server.
+- The intent page starts the browser's V3 connection on load, while the user is still reading the quote.
+- The sign panel shows connection progress with elapsed seconds, gives up after 45 seconds with a retry button, and labels the disabled button "Waiting for the decoded call".
+- Quotes now hold for 120 seconds instead of 60. Safety does not depend on a short window: chain state is re-read before a plan is issued, and settlement measures what actually arrived.
+
+Measured in the browser against live V3: decode in 8.3 seconds on a cold cache, 2.6 seconds on a warm cache.
