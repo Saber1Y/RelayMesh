@@ -253,6 +253,24 @@ importers:
         specifier: ^0.31.11
         version: 0.31.11
 
+  packages/routes:
+    dependencies:
+      '@polkadot/util':
+        specifier: ^14.0.3
+        version: 14.0.3
+      '@polkadot/util-crypto':
+        specifier: ^14.0.3
+        version: 14.0.3(@polkadot/util@14.0.3)
+      '@relaymesh/chains':
+        specifier: workspace:*
+        version: link:../chains
+      '@relaymesh/core':
+        specifier: workspace:*
+        version: link:../core
+      viem:
+        specifier: ^2.57.7
+        version: 2.57.7(typescript@6.0.3)(zod@4.6.7)
+
 packages:
 
   '@adraffy/ens-normalize@1.11.1':
