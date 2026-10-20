@@ -153,15 +153,18 @@ export function IntentForm() {
   const describedBy = (name: FieldName) => (errors[name] ? `${fid(name)}-error` : `${fid(name)}-help`);
 
   return (
-    <form onSubmit={onSubmit} noValidate className="enter grid content-start gap-6 rounded-[14px] border border-line bg-surface p-5 shadow-lift sm:p-7" style={stagger(1)}>
-      <div className="grid gap-1">
-        <h2 className="text-lg font-semibold tracking-[-0.02em]">New transfer intent</h2>
-        <p className="text-sm text-muted">Substrate account to EVM address, both on PortalDot V3.</p>
+    <form onSubmit={onSubmit} noValidate className="enter grid content-start gap-6 rounded-2xl border border-line bg-surface/65 p-5 shadow-lift backdrop-blur-xl sm:p-7" style={stagger(1)}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="grid gap-1.5">
+          <h2 className="hud-label text-muted">New transfer intent</h2>
+          <p className="text-sm text-muted">Substrate account to EVM address, both on PortalDot V3.</p>
+        </div>
+        <span className="font-mono text-[9px] tracking-[0.14em] text-accent">REAL / TESTNET</span>
       </div>
 
       <div className="grid gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-medium" id={fid("source-label")}>
+          <span className="hud-label text-muted" id={fid("source-label")}>
             From
           </span>
           {wallet.status === "connected" && substrateAccounts.length > 0 && (
@@ -172,11 +175,11 @@ export function IntentForm() {
         </div>
 
         {wallet.status !== "connected" && !manualSource && (
-          <div className="grid gap-3 rounded-xl bg-raised/70 p-4">
+          <div className="grid gap-3 rounded-xl border border-line bg-canvas/50 p-4">
             <p className="text-sm text-muted">Connect Talisman, SubWallet or the polkadot.js extension to send from your account.</p>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={connect} disabled={wallet.status === "connecting"}>
-                <Wallet size={16} />
+              <Button variant="secondary" onClick={connect} disabled={wallet.status === "connecting"}>
+                <Wallet size={16} className="text-accent" />
                 {wallet.status === "connecting" ? "Waiting for wallet" : "Connect wallet"}
               </Button>
               <Button variant="secondary" onClick={() => setManualSource(true)}>
@@ -188,7 +191,7 @@ export function IntentForm() {
         )}
 
         {wallet.status === "no-extension" && (
-          <p className="rounded-lg bg-caution-soft px-3 py-2 text-sm text-caution">
+          <p className="rounded-xl border border-caution/25 bg-caution-soft px-3 py-2 text-sm text-caution">
             No Polkadot wallet extension was found. You can still preview quotes for an address, but signing needs the account in a wallet.
           </p>
         )}
@@ -255,7 +258,7 @@ export function IntentForm() {
                 key={a.address}
                 type="button"
                 onClick={() => setRecipient(a.address)}
-                className="press rounded-lg border border-line bg-surface px-2 py-1 text-xs text-muted hover:border-accent/50 hover:text-accent"
+                className="press rounded-full border border-line px-2.5 py-1 text-xs text-muted hover:border-accent/50 hover:text-accent"
               >
                 {a.name ?? "EVM account"} <span className="font-mono">{shortHash(a.address)}</span>
               </button>
@@ -283,12 +286,12 @@ export function IntentForm() {
         </Field>
 
         <fieldset className="grid gap-2">
-          <legend className="mb-2 text-sm font-medium">Deadline</legend>
-          <div className="inline-flex w-fit rounded-lg border border-line-strong bg-surface p-0.5">
+          <legend className="hud-label mb-2 text-muted">Deadline</legend>
+          <div className="inline-flex w-fit rounded-full border border-line-strong bg-canvas/70 p-1">
             {DEADLINES.map((m) => (
               <label key={m} className="cursor-pointer">
                 <input type="radio" name={fid("deadline")} value={m} checked={deadlineMinutes === m} onChange={() => setDeadlineMinutes(m)} className="peer sr-only" />
-                <span className="block rounded-md px-3 py-2 text-sm text-muted transition-colors duration-150 hover:text-ink peer-checked:bg-accent-soft peer-checked:font-medium peer-checked:text-accent peer-focus-visible:outline-2 peer-focus-visible:outline-focus">
+                <span className="block rounded-full px-3.5 py-1.5 font-mono text-xs text-muted transition-colors duration-150 hover:text-ink peer-checked:bg-white/10 peer-checked:text-ink peer-focus-visible:outline-2 peer-focus-visible:outline-focus">
                   {m} min
                 </span>
               </label>
@@ -298,8 +301,8 @@ export function IntentForm() {
         </fieldset>
       </div>
 
-      <details className="group rounded-xl border border-line">
-        <summary className="flex cursor-pointer list-none items-center justify-between rounded-xl px-4 py-3 text-sm font-medium transition-colors marker:hidden hover:bg-raised/60 [&::-webkit-details-marker]:hidden">
+      <details className="group rounded-xl border border-line bg-canvas/40">
+        <summary className="flex cursor-pointer list-none items-center justify-between rounded-xl px-4 py-3 text-sm font-medium transition-colors marker:hidden hover:bg-white/[0.03] [&::-webkit-details-marker]:hidden">
           <span>
             Limits <span className="font-normal text-muted">(optional)</span>
           </span>
@@ -334,7 +337,7 @@ export function IntentForm() {
       </details>
 
       {formError && (
-        <p role="alert" className="rounded-lg bg-critical-soft px-3 py-2 text-sm text-critical">
+        <p role="alert" className="rounded-xl border border-critical/25 bg-critical-soft px-3 py-2 text-sm text-critical">
           {formError}
         </p>
       )}

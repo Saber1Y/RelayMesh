@@ -7,6 +7,7 @@ import type { Hex } from "viem";
 import { buildReceipt, hashReceipt, type ReceiptLeg } from "@relaymesh/core";
 import { listQuotes, loadIntent } from "@relaymesh/db";
 import { CopyButton } from "@/components/copy-button";
+import { PageShell } from "@/components/page-shell";
 import { Badge, Mono, Panel, stagger } from "@/components/ui";
 import { explorerBlockUrl, formatAmount, formatTime, shortHash, STATUS_META } from "@/lib/format";
 import { HEX16 } from "@/server/http";
@@ -25,7 +26,13 @@ function LegRows({ leg, wsUrl }: { leg: ReceiptLeg; wsUrl: string }) {
   return (
     <>
       <Row label="Transaction" compact>
-        {leg.txHash ? <Hash value={leg.txHash} label="Copy transaction hash" /> : <span className="text-muted">Not observed yet</span>}
+        {leg.txHash ? (
+          <Hash value={leg.txHash} label="Copy transaction hash" />
+        ) : leg.verifiedBy ? (
+          <span className="text-muted">None. Verified by reading chain state, not a separate transaction</span>
+        ) : (
+          <span className="text-muted">Not observed yet</span>
+        )}
       </Row>
       <Row label="Block" compact>
         {leg.blockHash ? (
@@ -82,13 +89,15 @@ export default async function ReceiptPage({ params }: { params: Promise<{ intent
 
   if (!quote) {
     return (
-      <div className="mx-auto grid max-w-2xl gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">No receipt yet</h1>
+      <PageShell narrow>
+      <div className="grid gap-4">
+        <h1 className="text-3xl font-semibold tracking-[-0.04em]">No receipt yet</h1>
         <p className="text-muted">A receipt exists once a route has been selected for this intent.</p>
         <Link href={`/intents/${intentId}`} className="text-accent hover:underline">
           Back to the intent
         </Link>
       </div>
+      </PageShell>
     );
   }
 
@@ -100,7 +109,8 @@ export default async function ReceiptPage({ params }: { params: Promise<{ intent
   const settled = receipt.status === "SETTLED";
 
   return (
-    <div className="mx-auto grid max-w-3xl gap-6">
+    <PageShell narrow>
+    <div className="grid gap-6">
       <div className="enter grid gap-5" style={stagger(0)}>
         <Link href={`/intents/${intentId}`} className="press inline-flex w-fit items-center gap-1.5 rounded-md text-sm text-muted hover:text-ink">
           <ArrowLeft size={14} />
@@ -116,7 +126,7 @@ export default async function ReceiptPage({ params }: { params: Promise<{ intent
           </div>
           <a
             href={`/api/intents/${intentId}/receipt?download=1`}
-            className="press group inline-flex items-center gap-2 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-accent-ink shadow-[0_1px_0_rgb(255_255_255/0.15)_inset] hover:bg-accent-hover"
+            className="press group inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-sm font-medium text-accent-ink shadow-glow hover:-translate-y-0.5 hover:shadow-glow-strong"
           >
             <DownloadSimple size={16} className="transition-transform duration-200 group-hover:translate-y-px" />
             Download JSON
@@ -201,5 +211,6 @@ export default async function ReceiptPage({ params }: { params: Promise<{ intent
         </ol>
       </Panel>
     </div>
+    </PageShell>
   );
 }

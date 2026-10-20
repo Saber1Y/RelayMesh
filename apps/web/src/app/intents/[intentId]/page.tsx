@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import type { Hex } from "viem";
 import { IntentWorkspace, type WireView } from "@/components/intent-workspace";
+import { PageShell } from "@/components/page-shell";
 import { HEX16 } from "@/server/http";
 import { getIntentView } from "@/server/intent-view";
 import { describeProviders, nowSeconds, v3Config } from "@/server/services";
@@ -20,5 +21,9 @@ export default async function IntentPage({ params }: { params: Promise<{ intentI
   const wire = JSON.parse(JSON.stringify(view, (_k, v: unknown) => (typeof v === "bigint" ? v.toString() : v))) as WireView;
   const unavailable = describeProviders().flatMap((p) => (p.status.available ? [] : [{ name: p.name, reason: p.status.reason }]));
 
-  return <IntentWorkspace initial={wire} wsUrl={v3Config.wsUrl} unavailableProviders={unavailable} />;
+  return (
+    <PageShell>
+      <IntentWorkspace initial={wire} wsUrl={v3Config.wsUrl} unavailableProviders={unavailable} />
+    </PageShell>
+  );
 }

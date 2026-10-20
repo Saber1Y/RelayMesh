@@ -1,65 +1,105 @@
-import { Eye, MagnifyingGlass, PenNib, SealCheck } from "@phosphor-icons/react/dist/ssr";
+import { ArrowUpRight, ClockCounterClockwise, Path, Pulse } from "@phosphor-icons/react/dist/ssr";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { countIntentsByStatus, listRecentIntents } from "@relaymesh/db";
 import { IntentForm } from "@/components/intent-form";
-import { Badge, stagger } from "@/components/ui";
-import { describeProviders } from "@/server/services";
+import { PageShell } from "@/components/page-shell";
+import { Badge, Panel, stagger } from "@/components/ui";
+import { formatAmount, shortHash, STATUS_META } from "@/lib/format";
+import { describeProviders, getDb, v3Config } from "@/server/services";
 
-const FLOW = [
-  { icon: MagnifyingGlass, title: "Quote", body: "Real fees and the exact amount the EVM side will show, read from V3." },
-  { icon: Eye, title: "Review", body: "Your browser decodes the call from chain metadata and checks it." },
-  { icon: PenNib, title: "Sign", body: "Your wallet signs that exact call. RelayMesh never holds keys." },
-  { icon: SealCheck, title: "Verify", body: "Finality and the balance change are read from the chain, then receipted." },
-] as const;
+export const dynamic = "force-dynamic";
+export const metadata: Metadata = { title: "Desk | RelayMesh" };
 
-export default function HomePage() {
+const LIVE_STATUSES = new Set(["SOURCE_SUBMITTED", "SOURCE_CONFIRMED", "DESTINATION_PENDING"]);
+
+export default async function DeskPage() {
+  const db = getDb();
+  const [counts, recent] = await Promise.all([countIntentsByStatus(db), listRecentIntents(db, 6)]);
   const providers = describeProviders();
+  const inFlight = counts.SOURCE_SUBMITTED + counts.SOURCE_CONFIRMED + counts.DESTINATION_PENDING;
 
-  // Mobile order: headline, form, flow, routes. Desktop: story on the left, form pinned on the right.
   return (
-    <div className="grid gap-12 lg:grid-cols-[minmax(0,1fr)_minmax(0,30rem)] lg:grid-rows-[auto_1fr] lg:gap-x-16">
-      <div className="enter grid gap-5 pt-2" style={stagger(0)}>
-        <h1 className="max-w-[16ch] text-4xl font-semibold leading-[1.05] tracking-[-0.035em] sm:text-5xl">Send tPOT. Keep the proof it landed.</h1>
-        <p className="max-w-[52ch] text-[17px] leading-relaxed text-muted">
-          RelayMesh quotes real routes, hands your wallet the exact call to sign, and only calls a transfer settled after reading both sides from the chain.
-        </p>
+    <PageShell>
+      <div className="enter mb-8 grid gap-3" style={stagger(0)}>
+        <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-accent">Routing desk</p>
+        <h1 className="text-4xl font-semibold leading-[0.98] tracking-[-0.05em] md:text-5xl">Start a transfer</h1>
       </div>
 
-      <div className="lg:sticky lg:top-24 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:self-start">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <IntentForm />
-      </div>
 
-      <div className="grid content-start gap-12">
-        <ol className="enter relative grid gap-6 sm:grid-cols-2" style={stagger(1)} aria-label="How a transfer works">
-          {FLOW.map(({ icon: Icon, title, body }) => (
-            <li key={title} className="grid grid-cols-[2.25rem_minmax(0,1fr)] items-start gap-3">
-              <span className="flex size-9 items-center justify-center rounded-[10px] border border-line bg-surface text-accent shadow-panel">
-                <Icon size={18} />
-              </span>
-              <div className="grid content-start gap-1 pt-0.5">
-                <h2 className="text-sm font-semibold">{title}</h2>
-                <p className="text-sm leading-relaxed text-muted">{body}</p>
+        <aside className="grid content-start gap-6">
+          <Panel title="Ledger" icon={<Pulse />} tag={<span className="font-mono text-[9px] text-accent">REAL / LIVE</span>} index={2}>
+            <dl className="grid grid-cols-3 gap-4">
+              <div className="grid gap-2 border-t border-line pt-3">
+                <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Settled</dt>
+                <dd className="text-2xl font-semibold tracking-[-0.04em] text-accent tabular-nums">{counts.SETTLED}</dd>
               </div>
-            </li>
-          ))}
-        </ol>
+              <div className="grid gap-2 border-t border-line pt-3">
+                <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">In flight</dt>
+                <dd className="text-2xl font-semibold tracking-[-0.04em] tabular-nums">{inFlight}</dd>
+              </div>
+              <div className="grid gap-2 border-t border-line pt-3">
+                <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Review</dt>
+                <dd className={`text-2xl font-semibold tracking-[-0.04em] tabular-nums ${counts.NEEDS_REVIEW > 0 ? "text-critical" : ""}`}>{counts.NEEDS_REVIEW}</dd>
+              </div>
+            </dl>
+            <p className="mt-4 font-mono text-[11px] text-muted">
+              Chain {v3Config.evmChainId} · PortalDot V3 testnet
+            </p>
+          </Panel>
 
-        <section aria-labelledby="routes-heading" className="enter grid gap-3" style={stagger(2)}>
-          <h2 id="routes-heading" className="text-sm font-semibold">
-            Routes
-          </h2>
-          <ul className="grid overflow-hidden rounded-[14px] border border-line bg-surface shadow-panel">
-            {providers.map((p) => (
-              <li key={p.id} className="grid gap-1.5 border-b border-line px-5 py-4 last:border-b-0">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-sm font-medium">{p.name}</span>
-                  {p.status.available ? <Badge tone="positive">Available</Badge> : <Badge tone="neutral">Unavailable</Badge>}
-                </div>
-                <p className="text-sm leading-relaxed text-muted">{p.status.available ? p.description : p.status.reason}</p>
-              </li>
-            ))}
-          </ul>
-          <p className="text-[13px] text-muted">All transfers run on the PortalDot V3 testnet with test tokens. Nothing here touches mainnet funds.</p>
-        </section>
+          <Panel title="Routes" icon={<Path />} index={3}>
+            <ul className="grid gap-3">
+              {providers.map((p) => (
+                <li key={p.id} className="grid gap-1.5 rounded-[10px] border border-line bg-canvas/40 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-sm font-medium">{p.name}</span>
+                    {p.status.available ? (
+                      <Badge tone="accent" live>
+                        Live
+                      </Badge>
+                    ) : (
+                      <Badge tone="neutral">Unavailable</Badge>
+                    )}
+                  </div>
+                  <p className="text-[13px] leading-relaxed text-muted">{p.status.available ? p.description : p.status.reason}</p>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+
+          <Panel title="Recent intents" icon={<ClockCounterClockwise />} index={4}>
+            {recent.length === 0 ? (
+              <p className="text-sm text-muted">No intents yet. Your first quote will appear here.</p>
+            ) : (
+              <ul className="-mx-2 grid">
+                {recent.map((r) => {
+                  const meta = STATUS_META[r.status];
+                  return (
+                    <li key={r.intentId}>
+                      <Link
+                        href={`/intents/${r.intentId}`}
+                        className="group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-[10px] px-2 py-2.5 transition-colors hover:bg-white/[0.04]"
+                      >
+                        <span className="text-sm font-medium tabular-nums">{formatAmount(r.sourceAmount, r.sourceChain)}</span>
+                        <Badge tone={meta.tone} live={LIVE_STATUSES.has(r.status)}>
+                          {meta.label}
+                        </Badge>
+                        <span className="flex items-center gap-1 font-mono text-[11px] text-muted">
+                          to {shortHash(r.recipient)}
+                          <ArrowUpRight size={11} className="opacity-0 transition-opacity group-hover:opacity-100" />
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </Panel>
+        </aside>
       </div>
-    </div>
+    </PageShell>
   );
 }

@@ -66,7 +66,7 @@ export function IntentWorkspace({
   return (
     <div className="grid gap-8">
       <div className="enter grid gap-6" style={stagger(0)}>
-        <Link href="/" className="press inline-flex w-fit items-center gap-1.5 rounded-md text-sm text-muted hover:text-ink">
+        <Link href="/desk" className="press inline-flex w-fit items-center gap-1.5 rounded-md text-sm text-muted hover:text-ink">
           <ArrowLeft size={14} />
           New intent
         </Link>

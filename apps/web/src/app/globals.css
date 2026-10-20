@@ -1,63 +1,37 @@
 @import "tailwindcss";
 
 /*
-  RelayMesh tokens. Cool zinc neutrals, one cobalt accent, and status colors used only for state.
-  Shape rule: controls (inputs, buttons, badges) are 8px; panels are 14px; the brand mark is 7px.
-  Shadows are tinted with the accent hue so elevation reads as part of the palette, not as grey smudge.
+  RelayMesh console tokens (command-center language). Dark studio canvas, one lime signal color for
+  the primary action, live state and focus; status colors only for state. The console is dark by design.
+  Shape rule: panels 16px, controls and CTAs full pill, inputs 12px, inner rows 10px.
+  Event color grammar: system blue, success green, waiting amber, failure red.
 */
 :root {
-  --canvas: #f4f5f8;
-  --surface: #ffffff;
-  --raised: #eef0f5;
-  --line: #e1e5ec;
-  --line-strong: #c6ccd7;
-  --ink: #12151b;
-  --muted: #535c6b;
-  --accent: #2a55d4;
-  --accent-hover: #2247b5;
-  --accent-ink: #ffffff;
-  --accent-soft: #e8eefc;
-  --positive: #187a4f;
-  --positive-soft: #e3f4ec;
-  --caution: #8a5600;
-  --caution-soft: #fbf0dc;
-  --critical: #b8323d;
-  --critical-soft: #fbe7e9;
-  --focus: #2a55d4;
-  --glow: rgb(42 85 212 / 0.09);
-  --shadow-panel: 0 1px 0 rgb(20 32 72 / 0.04), 0 1px 2px rgb(20 32 72 / 0.05), 0 12px 32px -18px rgb(28 52 130 / 0.22);
-  --shadow-lift: 0 1px 2px rgb(20 32 72 / 0.08), 0 16px 40px -20px rgb(28 52 130 / 0.32);
-  --grain-opacity: 0.035;
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --canvas: #0c0e12;
-    --surface: #13161c;
-    --raised: #1a1e26;
-    --line: #232832;
-    --line-strong: #343b48;
-    --ink: #e8ebf1;
-    --muted: #9ba4b3;
-    --accent: #7d9ef5;
-    --accent-hover: #9bb5f8;
-    --accent-ink: #0c0e12;
-    --accent-soft: #1b2643;
-    --positive: #53c592;
-    --positive-soft: #11291f;
-    --caution: #e2a948;
-    --caution-soft: #2e2311;
-    --critical: #f0808a;
-    --critical-soft: #34161a;
-    --focus: #9bb5f8;
-    --glow: rgb(125 158 245 / 0.08);
-    --shadow-panel: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 16px 40px -24px rgb(0 0 0 / 0.7);
-    --shadow-lift: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 20px 48px -24px rgb(0 0 0 / 0.8);
-    --grain-opacity: 0.05;
-    color-scheme: dark;
-  }
+  --canvas: #09090b;
+  --surface: #121516;
+  --raised: #1a1e20;
+  --line: rgb(255 255 255 / 0.1);
+  --line-strong: rgb(255 255 255 / 0.17);
+  --ink: #e6efe9;
+  --muted: #94a39c;
+  --accent: #c8f56a;
+  --accent-hover: #d7fa8f;
+  --accent-ink: #11170c;
+  --accent-soft: rgb(200 245 106 / 0.11);
+  --positive: #5fdc8f;
+  --positive-soft: rgb(95 220 143 / 0.12);
+  --caution: #f2c14e;
+  --caution-soft: rgb(242 193 78 / 0.12);
+  --critical: #f47b7b;
+  --critical-soft: rgb(244 123 123 / 0.12);
+  --info: #6fa8f5;
+  --focus: #c8f56a;
+  --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 24px 48px -28px rgb(0 0 0 / 0.75);
+  --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.06) inset, 0 32px 64px -32px rgb(0 0 0 / 0.85);
+  --glow: 0 0 20px rgb(200 245 106 / 0.2);
+  --glow-strong: 0 0 32px rgb(200 245 106 / 0.35);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -80,9 +54,12 @@
   --color-caution-soft: var(--caution-soft);
   --color-critical: var(--critical);
   --color-critical-soft: var(--critical-soft);
+  --color-info: var(--info);
   --color-focus: var(--focus);
   --shadow-panel: var(--shadow-panel);
   --shadow-lift: var(--shadow-lift);
+  --shadow-glow: var(--glow);
+  --shadow-glow-strong: var(--glow-strong);
   --ease-out: var(--ease-out);
 }
 
@@ -92,30 +69,28 @@
     scroll-behavior: smooth;
   }
   body {
-    background:
-      radial-gradient(60rem 28rem at 15% -10%, var(--glow), transparent 70%),
-      radial-gradient(40rem 22rem at 100% 0%, var(--glow), transparent 65%),
-      var(--canvas);
-    background-attachment: fixed;
+    background: var(--canvas);
     color: var(--ink);
     font-feature-settings: "ss01", "cv11";
   }
-  /* Grain: a fixed, non-interactive layer so it never repaints with scrolling content. */
+  /* Dot grid: fixed and non-interactive, so it never repaints with scrolling content. */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    opacity: var(--grain-opacity);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    opacity: 0.2;
+    background-image: radial-gradient(circle at 2px 2px, rgb(255 255 255 / 0.15) 1px, transparent 0);
+    background-size: 32px 32px;
   }
   :focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
   }
   ::selection {
-    background: var(--accent-soft);
+    background: rgb(200 245 106 / 0.25);
+    color: var(--ink);
   }
   h1,
   h2,
@@ -125,17 +100,28 @@
   p {
     text-wrap: pretty;
   }
+  input::placeholder {
+    color: rgb(148 163 156 / 0.6);
+  }
 }
 
-/* Entry: panels and new timeline events settle in. Stagger with style={{ "--i": n }}. */
+/* Mono micro-label used for HUD titles and live tags. */
+@utility hud-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+/* Entry: panels and new log lines settle in. Stagger with style={{ "--i": n }}. */
 @utility enter {
   transition:
-    opacity 320ms var(--ease-out),
-    transform 320ms var(--ease-out);
-  transition-delay: calc(var(--i, 0) * 45ms);
+    opacity 400ms var(--ease-out),
+    transform 400ms var(--ease-out);
+  transition-delay: calc(var(--i, 0) * 60ms);
   @starting-style {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(12px);
   }
 }
 
@@ -146,7 +132,7 @@
     background-color 150ms ease,
     border-color 150ms ease,
     color 150ms ease,
-    box-shadow 150ms ease;
+    box-shadow 200ms ease;
   &:active:not(:disabled) {
     transform: scale(0.97);
   }
@@ -156,10 +142,10 @@
 @keyframes live-ring {
   0% {
     transform: scale(1);
-    opacity: 0.55;
+    opacity: 0.6;
   }
   100% {
-    transform: scale(2.4);
+    transform: scale(2.6);
     opacity: 0;
   }
 }
@@ -177,7 +163,8 @@
     transform: none !important;
     transition-property: opacity;
   }
-  .press:active {
+  .press:active,
+  .press:hover {
     transform: none !important;
   }
   .live-ring,

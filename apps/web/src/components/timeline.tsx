@@ -1,76 +1,88 @@
 import { ArrowSquareOut } from "@phosphor-icons/react/dist/ssr";
-import type { StatusEvent } from "@relaymesh/core";
+import type { IntentStatus, StatusEvent } from "@relaymesh/core";
 import type { Wire } from "@/lib/api";
-import { explorerBlockUrl, formatTime, shortHash, STATUS_META } from "@/lib/format";
+import { explorerBlockUrl, formatTime, shortHash } from "@/lib/format";
 import { CopyButton } from "./copy-button";
-import { Mono, Panel } from "./ui";
+import { stagger } from "./ui";
 
-const TONE_RING: Record<string, string> = {
-  neutral: "border-line-strong bg-surface",
-  accent: "border-accent bg-accent-soft",
-  positive: "border-positive bg-positive-soft",
-  caution: "border-caution bg-caution-soft",
-  critical: "border-critical bg-critical-soft",
+// Event color grammar: system blue, waiting amber, success green, failure red.
+const EVENT_STYLE: Record<IntentStatus, { tag: string; className: string }> = {
+  DRAFT: { tag: "INTENT_CREATED", className: "text-info" },
+  QUOTED: { tag: "QUOTED", className: "text-info" },
+  AWAITING_SIGNATURE: { tag: "AWAITING_SIGNATURE", className: "text-caution" },
+  SOURCE_SUBMITTED: { tag: "IN_BLOCK", className: "text-caution" },
+  SOURCE_CONFIRMED: { tag: "SOURCE_FINAL", className: "text-positive" },
+  DESTINATION_PENDING: { tag: "CHECKING_DESTINATION", className: "text-caution" },
+  SETTLED: { tag: "SETTLED", className: "text-positive" },
+  EXPIRED: { tag: "EXPIRED", className: "text-muted" },
+  FAILED_BEFORE_SOURCE: { tag: "FAILED", className: "text-critical" },
+  NEEDS_REVIEW: { tag: "NEEDS_REVIEW", className: "text-critical" },
 };
 
-/** Append-only status history, oldest first, with the evidence recorded at each step. */
-export function Timeline({ history, wsUrl }: { history: Wire<StatusEvent>[]; wsUrl: string }) {
+/** Append-only status history rendered as a settlement log, with the evidence recorded at each step. */
+export function Timeline({ history, wsUrl, file = "settlement.log" }: { history: Wire<StatusEvent>[]; wsUrl: string; file?: string }) {
   return (
-    <Panel title="Timeline" description="Append-only. Every step keeps its evidence." index={2}>
-      <ol className="grid">
-        {history.map((event, i) => {
-          const meta = STATUS_META[event.status];
-          const last = i === history.length - 1;
+    <section className="enter overflow-hidden rounded-2xl border border-line bg-canvas shadow-lift" style={stagger(2)} aria-label="Timeline">
+      <div className="flex items-center gap-2 border-b border-line bg-[#121214] px-4 py-3">
+        <span className="size-2.5 rounded-full bg-critical/70" aria-hidden />
+        <span className="size-2.5 rounded-full bg-caution/70" aria-hidden />
+        <span className="size-2.5 rounded-full bg-positive/70" aria-hidden />
+        <span className="ml-2 font-mono text-[10px] text-muted">{file}</span>
+        <span className="ml-auto font-mono text-[9px] tracking-[0.14em] text-muted">APPEND-ONLY</span>
+      </div>
+      <ol className="grid gap-3.5 p-5 font-mono text-[12.5px] leading-relaxed">
+        {history.map((event) => {
+          const style = EVENT_STYLE[event.status];
           const e = event.evidence;
           return (
-            <li key={event.seq} className="enter relative grid grid-cols-[1rem_minmax(0,1fr)] gap-3 pb-5 last:pb-0">
-              {!last && <span className="absolute top-4 bottom-0 left-[7px] w-px bg-line" aria-hidden />}
-              <span className={`mt-1 h-[15px] w-[15px] rounded-full border-2 ${TONE_RING[meta.tone]}`} aria-hidden />
-              <div className="grid gap-1">
-                <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-                  <span className="text-sm font-medium">{meta.label}</span>
-                  <time className="font-mono text-xs text-muted" dateTime={new Date(event.at * 1000).toISOString()}>
-                    {formatTime(event.at)}
-                  </time>
-                </div>
-                <p className="text-sm leading-relaxed break-words text-muted">{event.reason}</p>
-                {e && (
-                  <dl className="mt-1 grid gap-1 text-xs">
-                    {e.txHash && (
-                      <div className="flex gap-2">
-                        <dt className="text-muted">Tx</dt>
-                        <dd>
-                          <span className="inline-flex items-center gap-0.5">
-                            <Mono className="text-xs" title={e.txHash}>
-                              {shortHash(e.txHash, 10, 6)}
-                            </Mono>
-                            <CopyButton value={e.txHash} label="Copy transaction hash" />
-                          </span>
-                        </dd>
-                      </div>
-                    )}
-                    {e.blockHash && (
-                      <div className="flex gap-2">
-                        <dt className="text-muted">Block</dt>
-                        <dd>
-                          <a href={explorerBlockUrl(wsUrl, e.blockNumber ?? e.blockHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
-                            <Mono className="text-xs">{e.blockNumber ? `#${e.blockNumber}` : shortHash(e.blockHash)}</Mono>
-                            <ArrowSquareOut size={12} />
-                          </a>
-                        </dd>
-                      </div>
-                    )}
-                    <div className="flex gap-2">
-                      <dt className="text-muted">Checked by</dt>
-                      <dd>{e.finalized ? `${e.method}, finalized` : `${e.method}, not final yet`}</dd>
-                    </div>
-                  </dl>
-                )}
+            <li key={event.seq} className="enter grid gap-1">
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <time className="text-muted/70 tabular-nums" dateTime={new Date(event.at * 1000).toISOString()}>
+                  {formatTime(event.at).replace(" UTC", "")}
+                </time>
+                <span className={`font-semibold ${style.className}`}>{style.tag}</span>
               </div>
+              <p className="break-words text-ink/75">{event.reason}</p>
+              {e && (
+                <dl className="grid gap-0.5 border-l border-line pl-3 text-[11.5px] text-muted">
+                  {e.txHash && (
+                    <div className="flex items-center gap-2">
+                      <dt>tx</dt>
+                      <dd className="flex items-center gap-0.5 text-ink/80">
+                        <span title={e.txHash}>{shortHash(e.txHash, 10, 6)}</span>
+                        <CopyButton value={e.txHash} label="Copy transaction hash" />
+                      </dd>
+                    </div>
+                  )}
+                  {(e.blockNumber || e.blockHash) && (
+                    <div className="flex items-center gap-2">
+                      <dt>block</dt>
+                      <dd>
+                        <a
+                          href={explorerBlockUrl(wsUrl, e.blockNumber ?? e.blockHash ?? "")}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-accent hover:underline"
+                        >
+                          {e.blockNumber ? `#${e.blockNumber}` : shortHash(e.blockHash ?? "")}
+                          <ArrowSquareOut size={11} />
+                        </a>
+                      </dd>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <dt>via</dt>
+                    <dd className="text-ink/80">
+                      {e.method}
+                      <span className={e.finalized ? "text-positive" : "text-caution"}>{e.finalized ? " / final" : " / not final"}</span>
+                    </dd>
+                  </div>
+                </dl>
+              )}
             </li>
           );
         })}
       </ol>
-    </Panel>
+    </section>
   );
 }
