@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiRequestError, apiFetch, type Wire } from "@/lib/api";
 import { formatAmount, formatDuration, shortHash, STATUS_META } from "@/lib/format";
 import { useClock } from "@/lib/use-clock";
+import { getBrowserApi } from "@/lib/wallet";
 import type { IntentView } from "@/server/intent-view";
 import { QuotesPanel, type Rejection } from "./quotes-panel";
 import { SettlementPanel } from "./settlement-panel";
@@ -42,6 +43,13 @@ export function IntentWorkspace({
       setRefreshError(error instanceof ApiRequestError ? error.message : "Could not refresh this intent.");
     }
   }, [initial.intent.intentId]);
+
+  // Start the browser's own V3 connection while the user reads the quote, so the call can be decoded
+  // (and later signed) without waiting. Failures surface in the sign panel, which retries.
+  const preSourceAtLoad = PRE_SOURCE.has(initial.status);
+  useEffect(() => {
+    if (preSourceAtLoad) getBrowserApi(wsUrl).catch(() => undefined);
+  }, [preSourceAtLoad, wsUrl]);
 
   // Poll while the intent can still change on its own (after signing, the chain and watcher move it).
   useEffect(() => {

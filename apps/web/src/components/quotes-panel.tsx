@@ -82,7 +82,7 @@ export function QuotesPanel({
   return (
     <Panel
       title="Routes"
-      description="Quotes hold for 60 seconds so fees and balances stay current."
+      description="Quotes hold for 2 minutes so fees and balances stay current."
       index={1}
       action={
         <Button variant="ghost" onClick={refresh} disabled={quoting} className="-my-1 -ml-2.5 px-2.5 py-1 sm:-mr-2 sm:ml-0">

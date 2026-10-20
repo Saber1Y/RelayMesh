@@ -39,10 +39,40 @@ export async function connectWallets(): Promise<WalletConnection> {
 
 let apiPromise: Promise<ApiPromise> | undefined;
 
+// Metadata this browser previously downloaded from the V3 node, keyed `${genesisHash}-${specVersion}`.
+// polkadot.js only uses it when the key matches what the node reports at connect time, so a runtime
+// upgrade simply misses the cache. It never comes from the RelayMesh server, which keeps the
+// in-browser call check independent of the server.
+const METADATA_CACHE_KEY = "relaymesh:v3-metadata";
+
+function readMetadataCache(): Record<string, `0x${string}`> | undefined {
+  try {
+    const raw = localStorage.getItem(METADATA_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, `0x${string}`>) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeMetadataCache(api: ApiPromise): void {
+  try {
+    const key = `${api.genesisHash.toHex()}-${api.runtimeVersion.specVersion.toString()}`;
+    if (readMetadataCache()?.[key]) return;
+    // Keep only the current runtime's metadata (about 1 MB as hex).
+    localStorage.setItem(METADATA_CACHE_KEY, JSON.stringify({ [key]: api.runtimeMetadata.toHex() }));
+  } catch {
+    // Storage full or unavailable: the next visit downloads metadata again.
+  }
+}
+
+/** Shared browser connection to V3. Call early (e.g. on page load) so it is ready by the time the user reviews. */
 export function getBrowserApi(wsUrl: string): Promise<ApiPromise> {
   apiPromise ??= (async () => {
     const { ApiPromise, WsProvider } = await import("@polkadot/api");
-    return ApiPromise.create({ provider: new WsProvider(wsUrl), noInitWarn: true });
+    const metadata = readMetadataCache();
+    const api = await ApiPromise.create({ provider: new WsProvider(wsUrl), noInitWarn: true, ...(metadata && { metadata }) });
+    writeMetadataCache(api);
+    return api;
   })().catch((error: unknown) => {
     apiPromise = undefined;
     throw error;

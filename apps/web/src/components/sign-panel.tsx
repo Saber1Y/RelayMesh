@@ -3,7 +3,7 @@
 import { CheckCircle, PenNib, WarningCircle } from "@phosphor-icons/react";
 import { u8aEq } from "@polkadot/util";
 import { decodeAddress } from "@polkadot/util-crypto";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Hex } from "viem";
 import type { ExecutionPlanRecord } from "@relaymesh/db";
 import { ApiRequestError, apiFetch, type Wire } from "@/lib/api";
@@ -18,6 +18,9 @@ type Phase =
   | { kind: SubmitPhase }
   | { kind: "verifying" }
   | { kind: "error"; message: string };
+
+/** Give up on decoding after this long and offer a retry, rather than leaving the button disabled silently. */
+const DECODE_TIMEOUT_SECONDS = 45;
 
 const PHASE_LABEL: Record<string, string> = {
   connecting: "Opening wallet",
@@ -77,16 +80,26 @@ export function SignPanel({
   const [phase, setPhase] = useState<Phase>({ kind: "idle" });
   const [inclusion, setInclusion] = useState<{ txHash: Hex; blockHash: Hex }>();
 
+  const [attempt, setAttempt] = useState(0);
+  const [decodeStartedAt, setDecodeStartedAt] = useState(now);
+  // Latest clock value, read inside the effect without re-running it every second.
+  const nowRef = useRef(now);
+  nowRef.current = now;
+
   useEffect(() => {
     let cancelled = false;
     setDecoded({ state: "loading" });
-    decodeCall(wsUrl, plan.callHex as Hex)
+    setDecodeStartedAt(nowRef.current);
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`no answer from the V3 node after ${DECODE_TIMEOUT_SECONDS}s`)), DECODE_TIMEOUT_SECONDS * 1000),
+    );
+    Promise.race([decodeCall(wsUrl, plan.callHex as Hex), timeout])
       .then((call) => !cancelled && setDecoded({ state: "ok", call }))
       .catch((e: unknown) => !cancelled && setDecoded({ state: "error", message: e instanceof Error ? e.message : "Could not reach the V3 node" }));
     return () => {
       cancelled = true;
     };
-  }, [wsUrl, plan.callHex]);
+  }, [wsUrl, plan.callHex, attempt]);
 
   const check = decoded.state === "ok" ? checkCall(decoded.call, view, plan) : undefined;
   const remaining = plan.submitBefore - now;
@@ -148,8 +161,24 @@ export function SignPanel({
 
         <div className="grid gap-3 rounded-xl border border-line bg-raised/60 p-4">
           <p className="text-sm font-medium">Call your wallet will sign</p>
-          {decoded.state === "loading" && <Skeleton className="h-14" />}
-          {decoded.state === "error" && <p className="text-sm text-critical">Could not decode the call: {decoded.message}</p>}
+          {decoded.state === "loading" && (
+            <div className="grid gap-2" role="status">
+              <Skeleton className="h-14" />
+              <p className="text-[13px] text-muted">
+                Connecting your browser to PortalDot V3 to decode the call
+                <span className="tabular-nums"> ({Math.max(0, now - decodeStartedAt)}s)</span>. The first visit downloads chain metadata;
+                later visits reuse it.
+              </p>
+            </div>
+          )}
+          {decoded.state === "error" && (
+            <div className="flex flex-wrap items-center gap-3" role="alert">
+              <p className="text-sm text-critical">Could not decode the call: {decoded.message}.</p>
+              <Button variant="secondary" onClick={() => setAttempt((n) => n + 1)} className="px-3 py-1.5">
+                Try again
+              </Button>
+            </div>
+          )}
           {decoded.state === "ok" && (
             <>
               <Mono className="block rounded-lg bg-surface px-3 py-2.5 text-[12.5px] leading-relaxed break-all shadow-[0_1px_0_rgb(20_32_72/0.03)]">
@@ -169,7 +198,7 @@ export function SignPanel({
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={sign} disabled={busy || !check?.ok} className="px-5 py-2.5">
               <PenNib size={16} />
-              {busy ? PHASE_LABEL[phase.kind] : "Sign in wallet"}
+              {busy ? PHASE_LABEL[phase.kind] : decoded.state === "ok" ? "Sign in wallet" : "Waiting for the decoded call"}
             </Button>
             {inclusion && (
               <span className="text-sm text-muted">
