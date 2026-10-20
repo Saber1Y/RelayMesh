@@ -294,14 +294,14 @@ A block fetch took about 1.3 seconds in testing, so the scanner fetches 10 block
 | Execution plan and in-browser call decoding | Real - decoded from live V3 metadata |
 | Server-side verification of reported transactions | Real - rejection paths verified live against real blocks |
 | Watcher finality, scanning and expiry | Real - ran against live V3; expired stale intents correctly |
-| Historical `eth_getBalance` delta measurement | Real reads verified live; settlement only reached in tests so far |
-| A signed tPOT transfer settled end to end | Not yet established - waiting for testnet tPOT |
+| Historical `eth_getBalance` delta measurement | Real - measured 0 to 0.9 tPOT across block #122911 for a live transfer |
+| A signed tPOT transfer settled end to end | Real - 1 tPOT signed in Talisman, settled in block #122911 ([evidence](docs/evidence.md)) |
 | `IntentRegistry` deployment and anchoring | Not yet established - contract compiles and simulates; deployment needs about 96 tPOT |
 | iBridge cross-chain route | Not yet established - no public interface from PortalDot |
 | Hosted deployment | Not yet established |
 
-The two things that turn this into a fully on-chain demo are testnet tPOT and the registry deployment.
-Both are external dependencies, and the code paths for them are built and tested against test doubles.
+The core flow is proven on chain: a real signed transfer was quoted, verified, finalized, measured and receipted (see [docs/evidence.md](docs/evidence.md)).
+What remains is the registry deployment, which needs about 96 tPOT, and an iBridge route once PortalDot publishes an interface.
 
 ## Tests
 
@@ -445,7 +445,6 @@ The polkadot.js, viem and Drizzle maintainers.
 
 ### Roadmap
 
-- Run and record a signed transfer end to end once tPOT arrives.
 - Deploy `IntentRegistry` and enable receipt anchoring.
 - Add the iBridge provider when PortalDot publishes a programmatic interface.
 - Add a second route to make ranking meaningful across providers.

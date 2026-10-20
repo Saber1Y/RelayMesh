@@ -204,3 +204,12 @@ Changes:
 - Quotes now hold for 120 seconds instead of 60. Safety does not depend on a short window: chain state is re-read before a plan is issued, and settlement measures what actually arrived.
 
 Measured in the browser against live V3: decode in 8.3 seconds on a cold cache, 2.6 seconds on a warm cache.
+
+## 2026-10-20: First real transfer settled
+
+A 1 tPOT transfer from `5EeRe5by...tYUZdP7` to `0x3F5b96A494061F7338Da529e3047809Ac6a7FB84`, signed in Talisman, settled in block #122911.
+The app reported `SETTLED` (verification mode `destination_rpc_state`), and every fact was then re-checked independently against the node: the extrinsic, its success events, finality, the 0 to 0.9 tPOT `eth_getBalance` change, and the receipt hash.
+Full details are in `docs/evidence.md`.
+
+Found while reviewing it: the timeline and receipt linked the destination block to polkadot.js apps by its EVM-style hash, which that explorer cannot look up.
+Links now use the block number, which is the same for both views of a V3 block.

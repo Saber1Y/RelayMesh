@@ -149,5 +149,5 @@ If the browser never reports the transaction, the watcher still finds it: it sca
   iBridge has no public interface and the V3 runtime has no bridge pallet (checked 2026-10-20).
 - The V3 node keeps historical state for recent blocks only.
   If the watcher is down for more than about 25 minutes after a transfer, the balance delta can no longer be measured and the intent is flagged for review.
-- No signed transfer has run yet, because no testnet tPOT has been received.
+- One signed transfer has settled end to end so far (block #122911, see [evidence.md](evidence.md)); broader testing is still to come.
 - `IntentRegistry` is not deployed yet (about 96 tPOT estimated).
