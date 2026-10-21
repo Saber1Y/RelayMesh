@@ -213,3 +213,29 @@ Full details are in `docs/evidence.md`.
 
 Found while reviewing it: the timeline and receipt linked the destination block to polkadot.js apps by its EVM-style hash, which that explorer cannot look up.
 Links now use the block number, which is the same for both views of a V3 block.
+
+## 2026-10-21: IntentRegistry deployed and receipts anchored
+
+The deployer key was funded through RelayMesh itself: a 150 tPOT Substrate to EVM transfer to `0xD0Dd...63e4`, which settled in block #136917 with 149.9 tPOT observed (150 minus the existential deposit of a new account).
+`pnpm deploy:registry` then deployed `IntentRegistry` at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` in block #136936.
+It cost about 94.27 tPOT, close to the 95.7 tPOT estimate, and the deployed code matches the artifact byte for byte.
+
+With `INTENT_REGISTRY_ADDRESS` and `RELAYER_PRIVATE_KEY` set, the watcher anchored both settled intents within a few blocks.
+For each one, `getIntent` on the contract returns the receipt hash that the downloadable receipt re-hashes to.
+Transactions and blocks are in `docs/evidence.md`.
+
+### Scanner fix found on the way
+
+After the restart the scanner stopped advancing about 15,000 blocks behind the finalized head, logging "No response received from RPC endpoint in 30s".
+Two things combined: 10 parallel block reads overwhelmed the node, and stale `AWAITING_SIGNATURE` test intents made the scanner crawl every block since the oldest one.
+A single failed read also threw away the whole pass, so the cursor never moved.
+
+Changes in `apps/worker/src/watcher.ts`:
+
+- 4 blocks are read at a time, and each read is retried 3 times with doubling backoff.
+- The cursor is saved after every chunk, so a failure keeps the progress made before it.
+- `scanRanges` turns each pending plan into the block range where it could have been signed: from its creation time at the fastest plausible block time, minus a margin, to the end of its signing window at the slowest plausible block time, plus a margin (or to the finalized head while the window is open).
+  The scanner jumps over blocks outside every range, since no planned call can be in them.
+
+Old blocks read fine one at a time (about 1.5 seconds each), so the cause was load rather than pruning.
+New unit tests cover `scanRanges`, and the database tests cover a retried timeout, a block that keeps failing, and skipping the gap after a stale plan's window.
