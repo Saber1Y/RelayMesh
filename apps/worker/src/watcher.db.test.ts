@@ -365,14 +365,27 @@ describe("finalized block scanner", () => {
     expect(bSource?.evidence?.blockNumber).toBe(105n);
   });
 
-  it("never moves the cursor backwards and limits blocks per pass", async () => {
-    await awaitingIntent();
+  it("skips blocks from before the plan existed, limits blocks per pass, and never rewinds", async () => {
+    await awaitingIntent(); // plan created 29 s before "now"
     await runPass(ctx()); // cursor at finalized 100
     chain.finalized = 1_000n;
-    expect(await runPass(ctx())).toMatchObject({ scannedTo: 150n, caughtUp: false }); // at most 50 blocks per pass
+    // The plan's window starts about 10 blocks back (3 s blocks) plus a 50-block margin: 940.
+    expect(await runPass(ctx())).toMatchObject({ scannedTo: 990n, caughtUp: false }); // at most 50 blocks per pass
     chain.finalized = 120n; // a lagging node must not rewind progress
     await runPass(ctx());
-    expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(150n);
+    expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(990n);
+  });
+
+  it("skips the gap after a stale plan's signing window has closed", async () => {
+    await awaitingIntent(); // plan created at NOW + 1, lifetime 1800 s
+    await runPass(ctx()); // cursor at finalized 100
+    clock = NOW + 10_000; // window closed long ago
+    chain.finalized = 5_000n;
+    const pass = await runPass(ctx());
+    // Window ends about (10_000 - 1_801) / 12 = 684 blocks back, plus 50: block 4366. Nothing after it is scanned.
+    expect(pass.scannedTo).toBeLessThanOrEqual(4_366n);
+    for (let i = 0; i < 200 && !(await runPass(ctx())).caughtUp; i++);
+    expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(5_000n);
   });
 });
 
@@ -393,8 +406,8 @@ describe("slow or failing RPC", () => {
     chain.finalized = 130n;
     chain.failReads.set(125n, Infinity);
     const pass = await runPass(ctx());
-    expect(pass).toMatchObject({ caughtUp: false, scannedTo: 120n, errors: 1 });
-    expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(120n);
+    expect(pass).toMatchObject({ caughtUp: false, scannedTo: 124n, errors: 1 }); // last finished 4-block chunk
+    expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(124n);
 
     chain.failReads.delete(125n); // the node recovers
     expect(await runPass(ctx())).toMatchObject({ caughtUp: true, scannedTo: 130n, errors: 0 });

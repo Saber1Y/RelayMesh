@@ -21,8 +21,13 @@ import type { Logger } from "./log";
 import { EVENT_LOOKBACK_BLOCKS, ZERO_ADDRESS, ZERO_HASH, type RegistryClient } from "./registry";
 
 export const SOURCE_SCAN_CURSOR = "source-scan";
-/** Blocks fetched in parallel while scanning. */
-const SCAN_CONCURRENCY = 10n;
+/** Block-time bounds for mapping wall-clock times to heights (V3 targets 6 s). Fast for starts, slow for ends. */
+const MIN_BLOCK_SECONDS = 3;
+const MAX_BLOCK_SECONDS = 12;
+/** Extra blocks added on both sides of every scan range. */
+const SCAN_WINDOW_MARGIN_BLOCKS = 50;
+/** Blocks fetched in parallel while scanning. Kept low: the public V3 node times out under bursts. */
+const SCAN_CONCURRENCY = 4n;
 /** Plans issued slightly after the block's own clock still count; validator clocks drift a little. */
 const CLOCK_SKEW_SECONDS = 30;
 
@@ -109,16 +114,43 @@ async function eachIntent(ctx: WatcherContext, ids: Hex[], stage: string, fn: (i
 }
 
 /**
+ * Block ranges that may contain a planned extrinsic: for each plan, from its creation to the end of
+ * its signing lifetime, mapped to heights pessimistically (starts assume fast blocks, ends assume slow
+ * blocks, both padded). Overlapping ranges are merged; the result is sorted.
+ */
+export function scanRanges(planTimes: number[], finalized: bigint, now: number, lifetimeSeconds: number): { start: bigint; end: bigint }[] {
+  const margin = BigInt(SCAN_WINDOW_MARGIN_BLOCKS);
+  const heightAt = (t: number, blockSeconds: number) => {
+    const back = BigInt(Math.ceil(Math.max(0, now - t) / blockSeconds));
+    return finalized > back ? finalized - back : 0n;
+  };
+  const ranges = planTimes
+    .map((t) => {
+      const start = heightAt(t, MIN_BLOCK_SECONDS);
+      const endTime = t + lifetimeSeconds;
+      // A window that is still open extends to the finalized head.
+      const end = endTime >= now ? finalized : heightAt(endTime, MAX_BLOCK_SECONDS) + margin;
+      return { start: start > margin ? start - margin : 0n, end: end < finalized ? end : finalized };
+    })
+    .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+  const merged: { start: bigint; end: bigint }[] = [];
+  for (const r of ranges) {
+    const last = merged.at(-1);
+    if (last && r.start <= last.end + 1n) last.end = r.end > last.end ? r.end : last.end;
+    else merged.push({ ...r });
+  }
+  return merged;
+}
+
+/**
  * Scans finalized blocks for extrinsics that are exactly a stored plan's call, signed by the intent's
  * requester. This finds transfers even when the browser never reported them, so nothing depends on
  * client reports.
  */
 async function scanForPlannedExtrinsics(ctx: WatcherContext, finalized: BlockRef, summary: PassSummary): Promise<void> {
-  const start = (await getCursor(ctx.db, SOURCE_SCAN_CURSOR)) ?? finalized.number - BigInt(ctx.config.scanBackfillBlocks);
-  const end = finalized.number < start + BigInt(ctx.config.maxBlocksPerPass) ? finalized.number : start + BigInt(ctx.config.maxBlocksPerPass);
-
   // callHex -> candidate intents, oldest plan first, so identical requests are matched in order.
   const watch = new Map<Hex, { intentId: Hex; signer: string; planCreatedAt: number }[]>();
+  const planTimes: number[] = [];
   for (const intentId of await listIntentIdsByStatus(ctx.db, ["AWAITING_SIGNATURE"], 500)) {
     const stored = await loadIntent(ctx.db, intentId);
     if (!stored) continue;
@@ -127,9 +159,28 @@ async function scanForPlannedExtrinsics(ctx: WatcherContext, finalized: BlockRef
       const list = watch.get(plan.callHex) ?? [];
       list.push({ intentId, signer: stored.intent.requester, planCreatedAt: plan.createdAt });
       watch.set(plan.callHex, list);
+      planTimes.push(plan.createdAt);
     }
   }
   for (const list of watch.values()) list.sort((a, b) => a.planCreatedAt - b.planCreatedAt);
+
+  // A planned extrinsic can only land between its plan's creation and the end of its signing
+  // lifetime, so only those block ranges are scanned; gaps between them are skipped. This keeps a
+  // stale cursor from forcing a crawl through thousands of irrelevant blocks on a slow node.
+  const cursor = (await getCursor(ctx.db, SOURCE_SCAN_CURSOR)) ?? finalized.number - BigInt(ctx.config.scanBackfillBlocks);
+  const ranges = scanRanges(planTimes, finalized.number, ctx.now(), ctx.config.signedTxLifetimeSeconds);
+  let start = cursor;
+  let rangeEnd = finalized.number;
+  const current = ranges.find((r) => r.end > cursor);
+  if (!current) {
+    start = cursor > finalized.number ? cursor : finalized.number;
+  } else {
+    if (current.start > cursor) start = current.start;
+    rangeEnd = current.end;
+  }
+  const limit = start + BigInt(ctx.config.maxBlocksPerPass);
+  const end = [finalized.number, rangeEnd, limit].reduce((a, b) => (b < a ? b : a));
+  summary.scannedTo = start;
 
   const matched = new Set<Hex>();
   // Fetch blocks concurrently (each costs a couple of RPC round trips), but match them strictly in order.
