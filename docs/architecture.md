@@ -27,7 +27,7 @@ flowchart TB
     subgraph V3[PortalDot V3 testnet]
         Sub[Substrate RPC<br/>wss://test-node-v3.portaldot.dev]
         EVM[EVM JSON-RPC, chain 420420777<br/>https://test-evm-rpc-v3.portaldot.dev]
-        Reg[IntentRegistry contract<br/>not deployed yet]
+        Reg[IntentRegistry contract<br/>0xfcfc36e3ea951640d1e495a1e671d66c75eb5123]
     end
 
     UI -->|create intent, quote,<br/>select route, report inclusion| API
@@ -41,10 +41,8 @@ flowchart TB
     Worker --> PG
     Worker -->|scan finalized blocks,<br/>confirm finality| Sub
     Worker -->|eth_getBalance at block N-1 and N| EVM
-    Worker -.->|recordIntent, recordReceipt| Reg
+    Worker -->|recordIntent, recordReceipt| Reg
 ```
-
-Dashed edges are implemented but not yet exercised on chain.
 
 ## Intent lifecycle
 
@@ -149,5 +147,6 @@ If the browser never reports the transaction, the watcher still finds it: it sca
   iBridge has no public interface and the V3 runtime has no bridge pallet (checked 2026-10-20).
 - The V3 node keeps historical state for recent blocks only.
   If the watcher is down for more than about 25 minutes after a transfer, the balance delta can no longer be measured and the intent is flagged for review.
-- One signed transfer has settled end to end so far (block #122911, see [evidence.md](evidence.md)); broader testing is still to come.
-- `IntentRegistry` is not deployed yet (about 96 tPOT estimated).
+- Two signed transfers have settled end to end so far (blocks #122911 and #136917, see [evidence.md](evidence.md)); broader testing is still to come.
+- `IntentRegistry` is deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` with a single recorder, the RelayMesh relayer key.
+  Anchoring stops if that key runs out of tPOT; settlement does not depend on it.

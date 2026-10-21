@@ -12,7 +12,7 @@ Moving value between chains usually means trusting a status page that says "comp
 RelayMesh turns a transfer into a structured intent, hands your wallet the exact call to sign, and only calls it settled after reading both sides from the chain itself.
 Every step lands in an append-only timeline and ends in a receipt anyone can re-hash.
 
-Live frontend: not deployed yet · Backend: runs locally · Contracts on PortalDot V3 testnet: `IntentRegistry` not deployed yet.
+Live frontend: not deployed yet · Backend: runs locally · Contracts on PortalDot V3 testnet: `IntentRegistry` at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`.
 
 [See it in one command](#see-it-in-one-command) · [The one rule](#the-one-rule) · [Architecture](#architecture) · [What's real vs pending](#whats-real-vs-pending---the-honesty-table) · [Tests](#tests) · [Run it locally](#run-it-locally)
 
@@ -169,7 +169,7 @@ flowchart TB
     subgraph V3[PortalDot V3 testnet]
         Sub[Substrate RPC]
         EVM[EVM RPC 420420777]
-        Reg[IntentRegistry<br/>not deployed yet]
+        Reg[IntentRegistry<br/>0xfcfc...5123]
     end
     UI --> API
     Wallet -->|signed extrinsic| Sub
@@ -179,7 +179,7 @@ flowchart TB
     Worker --> PG
     Worker -->|finality, scan| Sub
     Worker -->|balance at N-1 and N| EVM
-    Worker -.->|anchor hashes| Reg
+    Worker -->|anchor hashes| Reg
 ```
 
 ```mermaid
@@ -191,7 +191,7 @@ flowchart LR
     E --> F[Finalized]
     F --> G[Balance delta<br/>measured]
     G --> H[Receipt]
-    H -.-> I[Registry anchor]
+    H --> I[Registry anchor]
 ```
 
 The full diagrams, including the state machine and a sequence diagram, are in [docs/architecture.md](docs/architecture.md).
@@ -259,7 +259,7 @@ The full diagrams, including the state machine and a sequence diagram, are in [d
 **Writes**
 
 - The user's wallet submits `balances.transferKeepAlive` from a Substrate account to the account that controls the target EVM address.
-- The watcher's relayer calls `IntentRegistry.recordIntent` and `recordReceipt` once the contract is deployed (not yet).
+- The watcher's relayer calls `IntentRegistry.recordIntent` and `recordReceipt` on the deployed contract `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` after each settlement.
 
 The route uses Revive's account mapping: an EVM address is controlled by its mapped native account or by its fallback account `h160 ++ 0xEE * 12`, and `eth_getBalance` reports that account's reducible balance times 10^4.
 
@@ -286,7 +286,8 @@ Status times may not go backwards, so a web server clock ahead of the worker cou
 The watcher never stamps an event earlier than the latest one.
 
 **The remote node is slow from some regions.**
-A block fetch took about 1.3 seconds in testing, so the scanner fetches 10 blocks in parallel and still matches them in order.
+A block fetch took about 1.3 seconds in testing, and bursts of parallel reads timed out after 30 seconds.
+The scanner fetches 4 blocks at a time, retries a failed read with backoff, saves its cursor after every chunk, and jumps straight to the blocks where a pending plan could have been signed instead of crawling every block in between.
 
 ## What's real vs pending - the honesty table
 
@@ -298,13 +299,13 @@ A block fetch took about 1.3 seconds in testing, so the scanner fetches 10 block
 | Server-side verification of reported transactions | Real - rejection paths verified live against real blocks |
 | Watcher finality, scanning and expiry | Real - ran against live V3; expired stale intents correctly |
 | Historical `eth_getBalance` delta measurement | Real - measured 0 to 0.9 tPOT across block #122911 for a live transfer |
-| A signed tPOT transfer settled end to end | Real - 1 tPOT signed in Talisman, settled in block #122911 ([evidence](docs/evidence.md)) |
-| `IntentRegistry` deployment and anchoring | Not yet established - contract compiles and simulates; deployment needs about 96 tPOT |
+| A signed tPOT transfer settled end to end | Real - two transfers settled, in blocks #122911 and #136917 ([evidence](docs/evidence.md)) |
+| `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; both settled receipts anchored and re-checked against the contract |
 | iBridge cross-chain route | Not yet established - no public interface from PortalDot |
 | Hosted deployment | Not yet established |
 
-The core flow is proven on chain: a real signed transfer was quoted, verified, finalized, measured and receipted (see [docs/evidence.md](docs/evidence.md)).
-What remains is the registry deployment, which needs about 96 tPOT, and an iBridge route once PortalDot publishes an interface.
+The core flow is proven on chain: real signed transfers were quoted, verified, finalized, measured, receipted and anchored in `IntentRegistry` (see [docs/evidence.md](docs/evidence.md)).
+What remains is an iBridge route once PortalDot publishes an interface, and a hosted deployment.
 
 ## Tests
 
@@ -448,7 +449,6 @@ The polkadot.js, viem and Drizzle maintainers.
 
 ### Roadmap
 
-- Deploy `IntentRegistry` and enable receipt anchoring.
 - Add the iBridge provider when PortalDot publishes a programmatic interface.
 - Add a second route to make ranking meaningful across providers.
 - Webhooks for integrators and a hosted deployment.
