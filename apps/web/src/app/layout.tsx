@@ -30,19 +30,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           Skip to content
         </a>
 
-        <header className="fixed top-4 left-1/2 z-50 flex w-[min(980px,calc(100vw-1.5rem))] -translate-x-1/2 items-center justify-between gap-3 rounded-full border border-line bg-surface/70 py-2 pr-2 pl-3 shadow-xl shadow-black/20 backdrop-blur-xl sm:pl-4">
-          <Link href="/" className="press flex items-center gap-2.5 rounded-full font-mono text-[13px] tracking-[0.16em]" aria-label="RelayMesh home">
+        <header className="fixed top-4 left-1/2 z-50 flex w-[min(980px,calc(100vw-1.5rem))] -translate-x-1/2 items-center justify-between gap-3 rounded-full border border-line bg-surface/80 py-2 pr-2 pl-3 shadow-panel backdrop-blur-xl sm:pl-4">
+          <Link href="/" className="press flex items-center gap-2.5 rounded-full text-[15px] font-semibold tracking-[-0.02em]" aria-label="RelayMesh home">
             <span className="flex size-7 items-center justify-center rounded-md bg-accent text-accent-ink shadow-glow">
               <Graph size={16} weight="bold" />
             </span>
-            <span className="hidden sm:inline">RELAYMESH</span>
+            <span className="hidden sm:inline">RelayMesh</span>
           </Link>
           <NavLinks />
           <div className="flex items-center gap-2">
             <NetworkStatus />
             <Link
               href="/desk"
-              className="press rounded-full bg-ink px-4 py-2 text-sm font-medium text-canvas hover:-translate-y-0.5 hover:bg-white"
+              className="press rounded-full bg-accent px-4 py-2 text-sm font-medium text-accent-ink shadow-glow hover:-translate-y-0.5 hover:bg-accent-hover"
             >
               Launch desk
             </Link>
@@ -55,7 +55,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </main>
 
           <footer className="border-t border-line">
-            <div className="mx-auto flex max-w-[1160px] flex-wrap items-center justify-between gap-3 px-5 py-6 font-mono text-[11px] tracking-[0.06em] text-muted md:px-10">
+            <div className="mx-auto flex max-w-[1160px] flex-wrap items-center justify-between gap-3 px-5 py-6 text-[13px] text-muted md:px-10">
               <p>Testnet software on PortalDot V3. RelayMesh never holds keys or funds.</p>
               <a href="https://github.com/Saber1Y/RelayMesh" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 hover:text-ink">
                 <GithubLogo size={14} />

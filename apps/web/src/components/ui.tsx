@@ -2,7 +2,7 @@ import type { ComponentProps, CSSProperties, ReactNode } from "react";
 import type { Tone } from "@/lib/format";
 
 const TONE_CLASS: Record<Tone, string> = {
-  neutral: "border-line text-muted",
+  neutral: "border-line bg-raised/60 text-muted",
   accent: "border-accent/30 bg-accent-soft text-accent",
   positive: "border-positive/30 bg-positive-soft text-positive",
   caution: "border-caution/30 bg-caution-soft text-caution",
@@ -20,7 +20,7 @@ const DOT_CLASS: Record<Tone, string> = {
 /** Mono status tag. A dot is shown only when `live` (a real state that is still changing). */
 export function Badge({ tone, children, live = false }: { tone: Tone; children: ReactNode; live?: boolean }) {
   return (
-    <span className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.16em] ${TONE_CLASS[tone]}`}>
+    <span className={`inline-flex w-fit items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium ${TONE_CLASS[tone]}`}>
       {live && (
         <span className="relative flex size-1.5" aria-hidden>
           <span className={`live-ring absolute inset-0 rounded-full ${DOT_CLASS[tone]}`} />
@@ -60,14 +60,14 @@ export function Panel({
   const hasHeader = title || action || tag;
   return (
     <section
-      className={`enter rounded-2xl border border-line bg-surface/65 shadow-panel backdrop-blur-xl ${className}`}
+      className={`enter rounded-[18px] border border-line bg-surface shadow-panel ${className}`}
       style={stagger(index)}
     >
       {hasHeader && (
         <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-5 pt-5 pb-4 sm:px-6">
           <div className="grid min-w-[min(100%,10rem)] flex-1 gap-1.5">
             {title && (
-              <h2 className="hud-label flex items-center gap-2 text-muted">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-ink">
                 {icon && <span className="text-accent [&>svg]:size-3.5">{icon}</span>}
                 {title}
               </h2>
@@ -114,7 +114,7 @@ export function Mono({ children, title, className = "" }: { children: ReactNode;
 export function Field({ label, htmlFor, help, error, children }: { label: string; htmlFor: string; help?: ReactNode; error?: string | undefined; children: ReactNode }) {
   return (
     <div className="grid gap-2">
-      <label htmlFor={htmlFor} className="hud-label text-muted">
+      <label htmlFor={htmlFor} className="text-sm font-medium">
         {label}
       </label>
       {children}
@@ -134,7 +134,7 @@ export function Field({ label, htmlFor, help, error, children }: { label: string
 }
 
 export const inputClass =
-  "w-full rounded-xl border border-line-strong bg-canvas/70 px-3.5 py-2.5 text-sm text-ink transition-[border-color,box-shadow] duration-150 hover:border-white/25 focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/15 aria-[invalid=true]:border-critical aria-[invalid=true]:focus:ring-critical/15";
+  "w-full rounded-xl border border-line-strong bg-surface px-3.5 py-2.5 text-sm text-ink transition-[border-color,box-shadow] duration-150 hover:border-accent-tint focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/15 aria-[invalid=true]:border-critical aria-[invalid=true]:focus:ring-critical/15";
 
 export function Skeleton({ className = "" }: { className?: string }) {
   return <div className={`animate-pulse rounded-xl bg-raised ${className}`} aria-hidden />;
@@ -144,7 +144,7 @@ export function Skeleton({ className = "" }: { className?: string }) {
 export function Stat({ label, children, emphasis = false }: { label: string; children: ReactNode; emphasis?: boolean }) {
   return (
     <div className="grid content-start gap-2 border-t border-line pt-3">
-      <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">{label}</dt>
+      <dt className="text-[13px] text-muted">{label}</dt>
       <dd className={emphasis ? "text-2xl font-semibold tracking-[-0.04em] text-accent tabular-nums" : "text-sm"}>{children}</dd>
     </div>
   );

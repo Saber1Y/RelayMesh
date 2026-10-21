@@ -22,7 +22,7 @@ export default async function DeskPage() {
   return (
     <PageShell>
       <div className="enter mb-8 grid gap-3" style={stagger(0)}>
-        <p className="font-mono text-[11px] uppercase tracking-[0.22em] text-accent">Routing desk</p>
+        <p className="text-sm font-semibold text-accent">Routing desk</p>
         <h1 className="text-4xl font-semibold leading-[0.98] tracking-[-0.05em] md:text-5xl">Start a transfer</h1>
       </div>
 
@@ -30,18 +30,18 @@ export default async function DeskPage() {
         <IntentForm />
 
         <aside className="grid content-start gap-6">
-          <Panel title="Ledger" icon={<Pulse />} tag={<span className="font-mono text-[9px] text-accent">REAL / LIVE</span>} index={2}>
+          <Panel title="Ledger" icon={<Pulse />} tag={<Badge tone="positive" live>Live data</Badge>} index={2}>
             <dl className="grid grid-cols-3 gap-4">
               <div className="grid gap-2 border-t border-line pt-3">
-                <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Settled</dt>
+                <dt className="text-[13px] text-muted">Settled</dt>
                 <dd className="text-2xl font-semibold tracking-[-0.04em] text-accent tabular-nums">{counts.SETTLED}</dd>
               </div>
               <div className="grid gap-2 border-t border-line pt-3">
-                <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">In flight</dt>
+                <dt className="text-[13px] text-muted">In flight</dt>
                 <dd className="text-2xl font-semibold tracking-[-0.04em] tabular-nums">{inFlight}</dd>
               </div>
               <div className="grid gap-2 border-t border-line pt-3">
-                <dt className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">Review</dt>
+                <dt className="text-[13px] text-muted">Review</dt>
                 <dd className={`text-2xl font-semibold tracking-[-0.04em] tabular-nums ${counts.NEEDS_REVIEW > 0 ? "text-critical" : ""}`}>{counts.NEEDS_REVIEW}</dd>
               </div>
             </dl>
@@ -53,7 +53,7 @@ export default async function DeskPage() {
           <Panel title="Routes" icon={<Path />} index={3}>
             <ul className="grid gap-3">
               {providers.map((p) => (
-                <li key={p.id} className="grid gap-1.5 rounded-[10px] border border-line bg-canvas/40 p-3">
+                <li key={p.id} className="grid gap-1.5 rounded-[10px] border border-line bg-raised/50 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="text-sm font-medium">{p.name}</span>
                     {p.status.available ? (
@@ -81,7 +81,7 @@ export default async function DeskPage() {
                     <li key={r.intentId}>
                       <Link
                         href={`/intents/${r.intentId}`}
-                        className="group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-[10px] px-2 py-2.5 transition-colors hover:bg-white/[0.04]"
+                        className="group grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 rounded-[10px] px-2 py-2.5 transition-colors hover:bg-raised"
                       >
                         <span className="text-sm font-medium tabular-nums">{formatAmount(r.sourceAmount, r.sourceChain)}</span>
                         <Badge tone={meta.tone} live={LIVE_STATUSES.has(r.status)}>

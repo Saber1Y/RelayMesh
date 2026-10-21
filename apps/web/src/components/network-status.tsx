@@ -28,7 +28,7 @@ export function NetworkStatus({ compact = false }: { compact?: boolean }) {
   const dot = status.state === "up" ? "bg-accent" : status.state === "down" ? "bg-critical" : "bg-muted";
   return (
     <span
-      className="inline-flex items-center gap-2 rounded-full border border-line bg-canvas/60 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted"
+      className="inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3 py-1.5 text-xs text-muted"
       aria-live="polite"
       title="Finalized block on the PortalDot V3 testnet"
     >
@@ -36,8 +36,8 @@ export function NetworkStatus({ compact = false }: { compact?: boolean }) {
         {status.state === "up" && <span className={`live-ring absolute inset-0 rounded-full ${dot}`} aria-hidden />}
         <span className={`relative size-1.5 rounded-full ${dot}`} aria-hidden />
       </span>
-      {!compact && <span className="hidden lg:inline">V3</span>}
-      <span className="text-ink tabular-nums">
+      {!compact && <span className="hidden lg:inline">V3 testnet</span>}
+      <span className="font-mono text-ink tabular-nums">
         {status.state === "up" ? `#${status.finalized.toLocaleString("en-US")}` : status.state === "down" ? "Offline" : "Syncing"}
       </span>
       <span className="sr-only">finalized block</span>

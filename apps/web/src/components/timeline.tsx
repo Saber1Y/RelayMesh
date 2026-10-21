@@ -1,4 +1,4 @@
-import { ArrowSquareOut } from "@phosphor-icons/react/dist/ssr";
+import { ArrowSquareOut, ListChecks } from "@phosphor-icons/react/dist/ssr";
 import type { IntentStatus, StatusEvent } from "@relaymesh/core";
 import type { Wire } from "@/lib/api";
 import { explorerBlockUrl, formatTime, shortHash } from "@/lib/format";
@@ -22,13 +22,13 @@ const EVENT_STYLE: Record<IntentStatus, { tag: string; className: string }> = {
 /** Append-only status history rendered as a settlement log, with the evidence recorded at each step. */
 export function Timeline({ history, wsUrl, file = "settlement.log" }: { history: Wire<StatusEvent>[]; wsUrl: string; file?: string }) {
   return (
-    <section className="enter overflow-hidden rounded-2xl border border-line bg-canvas shadow-lift" style={stagger(2)} aria-label="Timeline">
-      <div className="flex items-center gap-2 border-b border-line bg-[#121214] px-4 py-3">
-        <span className="size-2.5 rounded-full bg-critical/70" aria-hidden />
-        <span className="size-2.5 rounded-full bg-caution/70" aria-hidden />
-        <span className="size-2.5 rounded-full bg-positive/70" aria-hidden />
-        <span className="ml-2 font-mono text-[10px] text-muted">{file}</span>
-        <span className="ml-auto font-mono text-[9px] tracking-[0.14em] text-muted">APPEND-ONLY</span>
+    <section className="enter overflow-hidden rounded-[18px] border border-line bg-surface shadow-lift" style={stagger(2)} aria-label="Timeline">
+      <div className="flex items-center gap-2.5 border-b border-line bg-raised/50 px-5 py-3">
+        <span className="flex size-6 items-center justify-center rounded-md bg-accent-soft text-accent" aria-hidden>
+          <ListChecks size={14} weight="bold" />
+        </span>
+        <span className="font-mono text-[12px] text-ink">{file}</span>
+        <span className="ml-auto rounded-full border border-line bg-surface px-2 py-0.5 text-[11px] text-muted">Append-only</span>
       </div>
       <ol className="grid gap-3.5 p-5 font-mono text-[12.5px] leading-relaxed">
         {history.map((event) => {
@@ -42,7 +42,7 @@ export function Timeline({ history, wsUrl, file = "settlement.log" }: { history:
                 </time>
                 <span className={`font-semibold ${style.className}`}>{style.tag}</span>
               </div>
-              <p className="break-words text-ink/75">{event.reason}</p>
+              <p className="break-words text-ink/80">{event.reason}</p>
               {e && (
                 <dl className="grid gap-0.5 border-l border-line pl-3 text-[11.5px] text-muted">
                   {e.txHash && (

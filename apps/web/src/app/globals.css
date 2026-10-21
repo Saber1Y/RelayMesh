@@ -1,37 +1,39 @@
 @import "tailwindcss";
 
 /*
-  RelayMesh console tokens (command-center language). Dark studio canvas, one lime signal color for
-  the primary action, live state and focus; status colors only for state. The console is dark by design.
-  Shape rule: panels 16px, controls and CTAs full pill, inputs 12px, inner rows 10px.
-  Event color grammar: system blue, success green, waiting amber, failure red.
+  RelayMesh identity: paper-white surfaces, near-black violet ink, and one purple accent.
+  Purple marks the primary action, live chain state and focus; status colors are used only for state.
+  Elevation comes from soft violet-tinted shadows rather than borders alone.
+  Shape rule: panels 18px, buttons and tags full pill, inputs 12px, inner rows 12px.
+  Event color grammar (logs): system blue, waiting amber, success green, failure red.
 */
 :root {
-  --canvas: #09090b;
-  --surface: #121516;
-  --raised: #1a1e20;
-  --line: rgb(255 255 255 / 0.1);
-  --line-strong: rgb(255 255 255 / 0.17);
-  --ink: #e6efe9;
-  --muted: #94a39c;
-  --accent: #c8f56a;
-  --accent-hover: #d7fa8f;
-  --accent-ink: #11170c;
-  --accent-soft: rgb(200 245 106 / 0.11);
-  --positive: #5fdc8f;
-  --positive-soft: rgb(95 220 143 / 0.12);
-  --caution: #f2c14e;
-  --caution-soft: rgb(242 193 78 / 0.12);
-  --critical: #f47b7b;
-  --critical-soft: rgb(244 123 123 / 0.12);
-  --info: #6fa8f5;
-  --focus: #c8f56a;
-  --shadow-panel: 0 1px 0 rgb(255 255 255 / 0.04) inset, 0 24px 48px -28px rgb(0 0 0 / 0.75);
-  --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.06) inset, 0 32px 64px -32px rgb(0 0 0 / 0.85);
-  --glow: 0 0 20px rgb(200 245 106 / 0.2);
-  --glow-strong: 0 0 32px rgb(200 245 106 / 0.35);
+  --canvas: #f7f6fb;
+  --surface: #ffffff;
+  --raised: #f1eff8;
+  --line: #e6e3ef;
+  --line-strong: #d3cee1;
+  --ink: #17131f;
+  --muted: #625c72;
+  --accent: #6343e0;
+  --accent-hover: #5232cc;
+  --accent-ink: #ffffff;
+  --accent-soft: #efebff;
+  --accent-tint: #c9bdfb;
+  --positive: #127045;
+  --positive-soft: #e5f5ec;
+  --caution: #8f5600;
+  --caution-soft: #fdf1dc;
+  --critical: #b8283a;
+  --critical-soft: #fde8eb;
+  --info: #2a64c9;
+  --focus: #6343e0;
+  --shadow-panel: 0 1px 2px rgb(40 24 96 / 0.05), 0 12px 32px -16px rgb(60 36 150 / 0.16);
+  --shadow-lift: 0 1px 2px rgb(40 24 96 / 0.06), 0 24px 48px -24px rgb(60 36 150 / 0.26);
+  --shadow-cta: 0 1px 0 rgb(255 255 255 / 0.2) inset, 0 8px 20px -8px rgb(99 67 224 / 0.55);
+  --shadow-cta-hover: 0 1px 0 rgb(255 255 255 / 0.2) inset, 0 12px 28px -8px rgb(99 67 224 / 0.65);
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -48,6 +50,7 @@
   --color-accent-hover: var(--accent-hover);
   --color-accent-ink: var(--accent-ink);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-tint: var(--accent-tint);
   --color-positive: var(--positive);
   --color-positive-soft: var(--positive-soft);
   --color-caution: var(--caution);
@@ -58,8 +61,8 @@
   --color-focus: var(--focus);
   --shadow-panel: var(--shadow-panel);
   --shadow-lift: var(--shadow-lift);
-  --shadow-glow: var(--glow);
-  --shadow-glow-strong: var(--glow-strong);
+  --shadow-glow: var(--shadow-cta);
+  --shadow-glow-strong: var(--shadow-cta-hover);
   --ease-out: var(--ease-out);
 }
 
@@ -73,23 +76,24 @@
     color: var(--ink);
     font-feature-settings: "ss01", "cv11";
   }
-  /* Dot grid: fixed and non-interactive, so it never repaints with scrolling content. */
+  /* A soft violet wash across the top of every page; fixed so it never repaints with scrolling content. */
   body::before {
     content: "";
     position: fixed;
-    inset: 0;
+    inset: 0 0 auto;
+    height: 38rem;
     z-index: 0;
     pointer-events: none;
-    opacity: 0.2;
-    background-image: radial-gradient(circle at 2px 2px, rgb(255 255 255 / 0.15) 1px, transparent 0);
-    background-size: 32px 32px;
+    background:
+      radial-gradient(50rem 22rem at 18% -6rem, rgb(99 67 224 / 0.1), transparent 70%),
+      radial-gradient(36rem 18rem at 88% -4rem, rgb(140 110 255 / 0.08), transparent 70%);
   }
   :focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 2px;
   }
   ::selection {
-    background: rgb(200 245 106 / 0.25);
+    background: var(--accent-soft);
     color: var(--ink);
   }
   h1,
@@ -101,16 +105,8 @@
     text-wrap: pretty;
   }
   input::placeholder {
-    color: rgb(148 163 156 / 0.6);
+    color: rgb(98 92 114 / 0.55);
   }
-}
-
-/* Mono micro-label used for HUD titles and live tags. */
-@utility hud-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
 }
 
 /* Entry: panels and new log lines settle in. Stagger with style={{ "--i": n }}. */
@@ -121,7 +117,7 @@
   transition-delay: calc(var(--i, 0) * 60ms);
   @starting-style {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(10px);
   }
 }
 
@@ -142,7 +138,7 @@
 @keyframes live-ring {
   0% {
     transform: scale(1);
-    opacity: 0.6;
+    opacity: 0.55;
   }
   100% {
     transform: scale(2.6);
