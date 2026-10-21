@@ -40,6 +40,8 @@ class FakeChain implements V3ChainReader {
   balances = new Map<string, bigint>();
   evmIndexedTo = 1_000n;
   prunedBelow = 0n;
+  /** Remaining simulated RPC timeouts per block height (Infinity = always fails). */
+  failReads = new Map<bigint, number>();
 
   block(n: bigint): FakeBlock {
     let b = this.blocks.get(n);
@@ -53,6 +55,11 @@ class FakeChain implements V3ChainReader {
     return { number: this.finalized, hash: this.block(this.finalized).hash };
   }
   async canonicalHash(n: bigint) {
+    const left = this.failReads.get(n) ?? 0;
+    if (left > 0) {
+      this.failReads.set(n, left - 1);
+      throw new Error("No response received from RPC endpoint in 30s");
+    }
     return this.block(n).hash;
   }
   async blockExtrinsics(hash: Hex) {
@@ -139,7 +146,7 @@ function ctx(): WatcherContext {
     registry,
     log: silent,
     now: () => clock,
-    config: { scanBackfillBlocks: 10, maxBlocksPerPass: 50, signedTxLifetimeSeconds: 1_800 },
+    config: { scanBackfillBlocks: 10, maxBlocksPerPass: 50, signedTxLifetimeSeconds: 1_800, rpcRetryDelayMs: 0 },
   };
 }
 
@@ -366,6 +373,31 @@ describe("finalized block scanner", () => {
     chain.finalized = 120n; // a lagging node must not rewind progress
     await runPass(ctx());
     expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(150n);
+  });
+});
+
+describe("slow or failing RPC", () => {
+  it("retries a block that times out and still finds the transfer in the same pass", async () => {
+    const { intent, callHex } = await awaitingIntent();
+    chain.block(95n).extrinsics.push({ index: 1, hash: hash32(95n, "dd"), callHex, signer: REQUESTER, success: true });
+    chain.setDelta(RECIPIENT, 95n, 0n, EXPECTED);
+    chain.failReads.set(95n, 2); // two timeouts, then it answers
+    const pass = await runPass(ctx());
+    expect(pass).toMatchObject({ found: 1, settled: 1, caughtUp: true, errors: 0 });
+    expect((await statuses(intent.intentId)).at(-1)).toBe("SETTLED");
+  });
+
+  it("keeps progress from finished chunks when a later block keeps failing", async () => {
+    await awaitingIntent();
+    await runPass(ctx()); // cursor at finalized 100
+    chain.finalized = 130n;
+    chain.failReads.set(125n, Infinity);
+    const pass = await runPass(ctx());
+    expect(pass).toMatchObject({ caughtUp: false, scannedTo: 120n, errors: 1 });
+    expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(120n);
+
+    chain.failReads.delete(125n); // the node recovers
+    expect(await runPass(ctx())).toMatchObject({ caughtUp: true, scannedTo: 130n, errors: 0 });
   });
 });
 

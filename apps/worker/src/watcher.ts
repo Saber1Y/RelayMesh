@@ -32,7 +32,13 @@ export interface WatcherContext {
   registry: RegistryClient | null;
   log: Logger;
   now(): number;
-  config: { scanBackfillBlocks: number; maxBlocksPerPass: number; signedTxLifetimeSeconds: number };
+  config: {
+    scanBackfillBlocks: number;
+    maxBlocksPerPass: number;
+    signedTxLifetimeSeconds: number;
+    /** Base delay between retries of a failed block read; doubles each attempt. Defaults to 1000ms. */
+    rpcRetryDelayMs?: number;
+  };
 }
 
 export interface PassSummary {
@@ -46,6 +52,22 @@ export interface PassSummary {
   expired: number;
   anchored: number;
   errors: number;
+}
+
+/** Attempts per block read before the pass gives up on that block (the next pass resumes from the cursor). */
+const BLOCK_READ_ATTEMPTS = 3;
+
+async function withRetry<T>(ctx: WatcherContext, what: string, fn: () => Promise<T>): Promise<T> {
+  const base = ctx.config.rpcRetryDelayMs ?? 1_000;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= BLOCK_READ_ATTEMPTS) throw error;
+      ctx.log.warn("retrying chain read", { what, attempt, error });
+      await new Promise((r) => setTimeout(r, base * 2 ** (attempt - 1)));
+    }
+  }
 }
 
 function sameAccount(a: string, b: string): boolean {
@@ -115,11 +137,13 @@ async function scanForPlannedExtrinsics(ctx: WatcherContext, finalized: BlockRef
     const numbers: bigint[] = [];
     for (let n = chunkStart; n <= end && n < chunkStart + SCAN_CONCURRENCY; n++) numbers.push(n);
     const blocks = await Promise.all(
-      numbers.map(async (n) => {
-        const hash = await ctx.chain.canonicalHash(n);
-        if (!hash) throw new Error(`Node has no canonical block at finalized height ${n}`);
-        return { number: n, hash, extrinsics: await ctx.chain.blockExtrinsics(hash) };
-      }),
+      numbers.map((n) =>
+        withRetry(ctx, `block ${n}`, async () => {
+          const hash = await ctx.chain.canonicalHash(n);
+          if (!hash) throw new Error(`Node has no canonical block at finalized height ${n}`);
+          return { number: n, hash, extrinsics: await ctx.chain.blockExtrinsics(hash) };
+        }),
+      ),
     );
 
     for (const block of blocks) {
@@ -138,6 +162,10 @@ async function scanForPlannedExtrinsics(ctx: WatcherContext, finalized: BlockRef
         summary.found++;
       }
     }
+    // Keep finished work even if a later chunk fails: the next pass resumes after this chunk.
+    const chunkEnd = numbers.at(-1) as bigint;
+    await advanceCursor(ctx.db, SOURCE_SCAN_CURSOR, chunkEnd);
+    summary.scannedTo = chunkEnd;
   }
   await advanceCursor(ctx.db, SOURCE_SCAN_CURSOR, end);
   summary.scannedTo = end;
