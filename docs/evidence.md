@@ -68,6 +68,53 @@ system.ExtrinsicSuccess
 
 From signature to settlement took about 19 seconds after inclusion.
 
-## Not yet on chain
+## Transfer 2: Substrate to EVM, settled (2026-10-21)
 
-- `IntentRegistry` is not deployed, so the receipt hash above is not yet anchored in a contract.
+A 150 tPOT transfer from the same Substrate account to the RelayMesh deployer and relayer address, made through RelayMesh itself to fund the registry deployment.
+
+| Item | Value |
+| --- | --- |
+| Intent ID | `0x28987e8f6976957c3e030479cbe5fe64` |
+| Intent hash | `0xea3dec2f739ffedc4eb2e2dc1fc58c0e7d0acb536a7df687fa0758936d43b9d0` |
+| Signer (source) | `5EeRe5byF4PndSAwaESnGPLjZf5zoSnbFS7faZ251tYUZdP7` |
+| Recipient (EVM) | `0xD0Dd606e328E9402C056d50171CAcAAdFB2563e4` |
+| Call | `balances.transferKeepAlive(dest, 15000000000000000)` (150 tPOT) |
+| Extrinsic hash | `0x97c3d29453fdd57f087671c5d7daff01665e1de230776524cdd6f07b967b6ff4` |
+| Block | #136917, Substrate hash `0xa5c5d5d48158f1231539e32cd03cf13f7ddd4ba2f512dbb7608d3cd6fc9b68bc` |
+| EVM view of the block | hash `0x5442ac38f7d33736c1c05469052fcfa95f1d2c9e6a3cc0ff00c35ba0bc2cecc7` |
+| Observed on the EVM side | `149900000000000000000` (149.9 tPOT: 150 minus the 0.1 tPOT existential deposit of a new account) |
+| Status | `SETTLED`, verification mode `destination_rpc_state` |
+| Receipt hash | `0x58f6e2f9dae10f1a2313815ad21f8fd8b8ef1cc3f2d00f9e17db47ea793fb54e` |
+
+Explorer: [block #136917 on polkadot.js apps](https://polkadot.js.org/apps/?rpc=wss%3A%2F%2Ftest-node-v3.portaldot.dev#/explorer/query/136917)
+
+From inclusion to settlement took about 21 seconds.
+
+## IntentRegistry deployment (2026-10-21)
+
+| Item | Value |
+| --- | --- |
+| Address | `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` |
+| Deployment transaction | `0xa8d562b095d5c4d4fa9ac5484dc9a6659d51ed1c403b6c06360dcf3f0d6de6a5` |
+| Block | #136936 |
+| Deployer and recorder | `0xD0Dd606e328E9402C056d50171CAcAAdFB2563e4` |
+| Cost | About 94.27 tPOT, mostly the Revive storage deposit for the code |
+| Runtime code | 1039 bytes, byte-for-byte equal to the compiled artifact (`eth_getCode`) |
+
+## Receipt anchors (2026-10-21)
+
+Once the registry was configured, the watcher anchored both settled intents: `recordIntent` with the intent hash and route, then `recordReceipt` with the receipt hash.
+
+| Intent | `recordIntent` transaction (block) | `recordReceipt` transaction (block) | Receipt hash on chain |
+| --- | --- | --- | --- |
+| Transfer 1 | `0x166c9ea112425fcc4db0f473e0eb74cbdf37ad16b70dcf8b747444cd74bf82cb` (#136952) | `0x1f07605fb157a6f1ac5c71bbb2f3a61ac0bb38dfa8f5036b8393af3464812799` (#136953) | `0x3dca870319888d95290f490166b9bcdf120b4dd75daee050fd11e91a34544ab5` |
+| Transfer 2 | `0xa120a0140b458eecf73249afccc317339f19e323c4e049fb88af27009c07c231` (#136955) | `0x7b09dc97984c3c7f0d40c1df50c78f3f32d7d6f14cf59e27b16608ad0f9d4dc8` (#136956) | `0x58f6e2f9dae10f1a2313815ad21f8fd8b8ef1cc3f2d00f9e17db47ea793fb54e` |
+
+### How the anchors were verified
+
+- **The transactions succeeded.** `eth_getTransactionReceipt` returns status `success` for all four.
+- **The contract holds the right hashes.** `getIntent(intentHash)` on the deployed contract returns the receipt hash in the table, the route ID `keccak256("v3-substrate-to-evm")` and the recorder above.
+- **The anchored hash is the downloadable receipt.** For each intent, `keccak256("relaymesh.receipt.v1\n" + <receipt JSON from the API>)` equals the receipt hash read from the contract.
+
+The registry is an audit anchor: it proves which receipt RelayMesh committed to, not that a transfer happened.
+The transfer itself is proven by the chain facts above.
