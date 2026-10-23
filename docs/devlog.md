@@ -256,11 +256,15 @@ Restarted on the dev database, the watcher jumped from 136,750 to the head in on
 
 ### Deployment
 
-- Web app and Postgres run on Render from `render.yaml`, both on free plans: [relaymesh-web.onrender.com](https://relaymesh-web.onrender.com).
+- Postgres runs on Render from `render.yaml` on the free plan, at first with the web app beside it.
 - The watcher runs under PM2 on an always-on server (`apps/worker/ecosystem.config.cjs`) and connects to the database over TLS.
   The database accepts that server's IP and Render's private network only.
 - The existing records were copied into the hosted database in one transaction.
   The hosted receipt for transfer 2 re-hashes to the receipt hash anchored in `IntentRegistry`.
 - Watcher memory peaks near 250 MB during startup and settles around 170 MB, so the heap is capped at 160 MB and PM2 restarts it only above 400 MB.
+- The web app then moved from Render's free plan, which sleeps after 15 idle minutes, to the same server as the watcher: [relaymesh.162-62-231-147.sslip.io](https://relaymesh.162-62-231-147.sslip.io).
+  It is built locally and only the build output is copied over, since the server has about 500 MB free and `next build` needs more.
+  PM2 serves it on loopback port 3200 and Caddy adds TLS with a Let's Encrypt certificate.
+  It settles at about 255 MB; the watcher at about 90 MB.
 
 Block links now go to PortalDot's official V3 testnet explorer, announced with the V3 upgrade.
