@@ -1,0 +1,54 @@
+# Render Blueprint: the web app, the watcher and Postgres in one region on Render's private network.
+# Secrets are never stored here; RELAYER_PRIVATE_KEY is entered in the Render Dashboard on creation.
+
+databases:
+  - name: relaymesh-db
+    databaseName: relaymesh
+    user: relaymesh
+    plan: free
+    region: frankfurt
+    postgresMajorVersion: "17"
+    # Private network only: the web app and the watcher reach it, the internet does not.
+    ipAllowList: []
+
+services:
+  - type: web
+    name: relaymesh-web
+    runtime: node
+    region: frankfurt
+    plan: free
+    buildCommand: corepack pnpm install --frozen-lockfile && corepack pnpm --filter @relaymesh/web build
+    startCommand: corepack pnpm --filter @relaymesh/web start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: COREPACK_ENABLE_DOWNLOAD_PROMPT
+        value: "0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: relaymesh-db
+          property: connectionString
+
+  # The watcher runs nonstop, so it needs a paid instance (Render has no free background workers).
+  - type: worker
+    name: relaymesh-watcher
+    runtime: node
+    region: frankfurt
+    plan: starter
+    buildCommand: corepack pnpm install --frozen-lockfile
+    preDeployCommand: corepack pnpm db:migrate
+    startCommand: corepack pnpm worker
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: COREPACK_ENABLE_DOWNLOAD_PROMPT
+        value: "0"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: relaymesh-db
+          property: connectionString
+      - key: INTENT_REGISTRY_ADDRESS
+        value: "0xfcfc36e3ea951640d1e495a1e671d66c75eb5123"
+      - key: RELAYER_PRIVATE_KEY
+        sync: false
