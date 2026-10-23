@@ -29,7 +29,7 @@ export interface V3ChainReader {
   canonicalHash(number: bigint): Promise<Hex | null>;
   blockExtrinsics(hash: Hex): Promise<BlockExtrinsic[]>;
   verifyExtrinsic(check: ExtrinsicCheck): Promise<ExtrinsicVerification>;
-  /** Block time in unix seconds (pallet_timestamp), read from state at that block. */
+  /** Block time in unix seconds, from the block's own timestamp.set inherent (works for blocks of any age). */
   blockTimestamp(hash: Hex): Promise<number>;
   /** eth_getBalance at an exact block. Historical state is only kept for recent blocks. */
   evmBalanceAt(address: Hex, blockNumber: bigint): Promise<EvmBalanceRead>;
@@ -63,8 +63,12 @@ export function createV3ChainReader(api: ApiPromise, evm: PublicClient): V3Chain
     },
 
     async blockTimestamp(hash) {
-      const ms = await (await api.at(hash)).query.timestamp.now();
-      return Math.floor(ms.toNumber() / 1000);
+      // Read from the block body, not from state: the public node discards state for older blocks,
+      // but keeps every block, so this answers for any height.
+      const block = await api.rpc.chain.getBlock(hash);
+      const set = block.block.extrinsics.find((ex) => ex.method.section === "timestamp" && ex.method.method === "set");
+      if (!set) throw new Error(`Block ${hash} has no timestamp.set inherent`);
+      return Number(BigInt(set.method.args[0]?.toString() ?? "0") / 1000n);
     },
 
     async evmBalanceAt(address, blockNumber) {
