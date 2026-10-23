@@ -239,3 +239,28 @@ Changes in `apps/worker/src/watcher.ts`:
 
 Old blocks read fine one at a time (about 1.5 seconds each), so the cause was load rather than pruning.
 New unit tests cover `scanRanges`, and the database tests cover a retried timeout, a block that keeps failing, and skipping the gap after a stale plan's window.
+
+## 2026-10-23: Hosted, and the scanner window fix done properly
+
+### The window estimate was wrong
+
+The local watcher had stopped advancing at block 136,750, about 23,000 blocks behind the head.
+The 2026-10-21 fix located each pending plan's blocks by counting back from the current time at 3 to 12 seconds per block.
+V3 produces a block every 6 seconds, so both ends of the estimate drift away from the truth as a plan ages: for a 2-day-old plan the range spanned about 43,000 blocks and grew faster than the scanner could read.
+
+Now the watcher finds the real blocks.
+`blockTimestamp` reads the time from the block's own `timestamp.set` inherent instead of from state, which the node discards for older blocks.
+`firstBlockAtOrAfter` searches block timestamps, interpolating and falling back to bisection when a guess does not halve the interval, and each plan's result is cached.
+Against live V3 it found block #122911 from its timestamp (21:54:42 UTC, as the explorer shows) in 9 reads.
+Restarted on the dev database, the watcher jumped from 136,750 to the head in one pass and expired the 3 stale test intents.
+
+### Deployment
+
+- Web app and Postgres run on Render from `render.yaml`, both on free plans: [relaymesh-web.onrender.com](https://relaymesh-web.onrender.com).
+- The watcher runs under PM2 on an always-on server (`apps/worker/ecosystem.config.cjs`) and connects to the database over TLS.
+  The database accepts that server's IP and Render's private network only.
+- The existing records were copied into the hosted database in one transaction.
+  The hosted receipt for transfer 2 re-hashes to the receipt hash anchored in `IntentRegistry`.
+- Watcher memory peaks near 250 MB during startup and settles around 170 MB, so the heap is capped at 160 MB and PM2 restarts it only above 400 MB.
+
+Block links now go to PortalDot's official V3 testnet explorer, announced with the V3 upgrade.
