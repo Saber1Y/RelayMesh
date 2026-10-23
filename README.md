@@ -12,7 +12,7 @@ Moving value between chains usually means trusting a status page that says "comp
 RelayMesh turns a transfer into a structured intent, hands your wallet the exact call to sign, and only calls it settled after reading both sides from the chain itself.
 Every step lands in an append-only timeline and ends in a receipt anyone can re-hash.
 
-Live app: [relaymesh-web.onrender.com](https://relaymesh-web.onrender.com) (free tier, the first visit after idle can take about a minute) · Watcher: always-on server · Contracts on PortalDot V3 testnet: `IntentRegistry` at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`.
+Live app: [relaymesh.162-62-231-147.sslip.io](https://relaymesh.162-62-231-147.sslip.io) · Watcher: always-on server · Contracts on PortalDot V3 testnet: `IntentRegistry` at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`.
 
 [See it in one command](#see-it-in-one-command) · [The one rule](#the-one-rule) · [Architecture](#architecture) · [What's real vs pending](#whats-real-vs-pending---the-honesty-table) · [Tests](#tests) · [Run it locally](#run-it-locally)
 
@@ -303,7 +303,7 @@ Those blocks are located from on-chain block timestamps, read from each block's 
 | A signed tPOT transfer settled end to end | Real - two transfers settled, in blocks #122911 and #136917 ([evidence](docs/evidence.md)) |
 | `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; both settled receipts anchored and re-checked against the contract |
 | iBridge cross-chain route | Not yet established - no public interface from PortalDot |
-| Hosted deployment | Real - web app and Postgres on Render, watcher on an always-on server, serving the same settled transfers and receipts |
+| Hosted deployment | Real - web app and watcher on an always-on server behind Caddy, Postgres on Render, serving the same settled transfers and receipts |
 
 The core flow is proven on chain: real signed transfers were quoted, verified, finalized, measured, receipted and anchored in `IntentRegistry` (see [docs/evidence.md](docs/evidence.md)).
 What remains is an iBridge route once PortalDot publishes an interface.
@@ -405,18 +405,24 @@ pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
 
 ## Deploy
 
-The live deployment splits into two parts.
+The live deployment runs the web app and the watcher on one small always-on server under PM2, with Postgres on Render.
 
-### Web app and database (Render)
+### Database (Render)
 
-`render.yaml` is a Render Blueprint for the web app and Postgres, both on free plans in Frankfurt.
-The web app reaches the database over Render's private network.
-From the internet the database accepts only the watcher server's IP, over TLS.
+`render.yaml` is a Render Blueprint for Postgres on the free plan in Frankfurt.
+From the internet the database accepts only the server's IP, over TLS.
+The Blueprint also defines a free Render web service, which serves the same app as a fallback but sleeps when idle.
+
+### Web app (always-on server)
+
+The app is built where memory is plentiful and only the build output is copied to the server, because `next build` needs far more memory than serving does.
+On the server, `pm2 start apps/web/ecosystem.config.cjs` serves it on `127.0.0.1:3200`, and Caddy terminates TLS in front of it.
+It uses about 255 MB.
 Any other Node.js host that runs `next build` and `next start --port $PORT` works too.
 
 ### Watcher (always-on server)
 
-The watcher must run nonstop, so it runs on a small always-on server under PM2:
+The watcher must run nonstop, so it runs next to the web app under PM2:
 
 ```bash
 git clone https://github.com/Saber1Y/RelayMesh.git relaymesh && cd relaymesh
