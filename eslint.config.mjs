@@ -10,4 +10,9 @@ export default tseslint.config(
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_", ignoreRestSiblings: true }],
     },
   },
+  {
+    // CommonJS config files read by tools that require it (PM2).
+    files: ["**/*.cjs"],
+    languageOptions: { sourceType: "commonjs", globals: { module: "writable", require: "readonly", __dirname: "readonly" } },
+  },
 );
