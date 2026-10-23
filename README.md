@@ -12,7 +12,7 @@ Moving value between chains usually means trusting a status page that says "comp
 RelayMesh turns a transfer into a structured intent, hands your wallet the exact call to sign, and only calls it settled after reading both sides from the chain itself.
 Every step lands in an append-only timeline and ends in a receipt anyone can re-hash.
 
-Live frontend: not deployed yet · Backend: runs locally · Contracts on PortalDot V3 testnet: `IntentRegistry` at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`.
+Live app: [relaymesh-web.onrender.com](https://relaymesh-web.onrender.com) (free tier, the first visit after idle can take about a minute) · Watcher: always-on server · Contracts on PortalDot V3 testnet: `IntentRegistry` at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`.
 
 [See it in one command](#see-it-in-one-command) · [The one rule](#the-one-rule) · [Architecture](#architecture) · [What's real vs pending](#whats-real-vs-pending---the-honesty-table) · [Tests](#tests) · [Run it locally](#run-it-locally)
 
@@ -288,6 +288,7 @@ The watcher never stamps an event earlier than the latest one.
 **The remote node is slow from some regions.**
 A block fetch took about 1.3 seconds in testing, and bursts of parallel reads timed out after 30 seconds.
 The scanner fetches 4 blocks at a time, retries a failed read with backoff, saves its cursor after every chunk, and jumps straight to the blocks where a pending plan could have been signed instead of crawling every block in between.
+Those blocks are located from on-chain block timestamps, read from each block's `timestamp.set` inherent, because the node discards state for older blocks but keeps every block.
 
 ## What's real vs pending - the honesty table
 
@@ -302,10 +303,10 @@ The scanner fetches 4 blocks at a time, retries a failed read with backoff, save
 | A signed tPOT transfer settled end to end | Real - two transfers settled, in blocks #122911 and #136917 ([evidence](docs/evidence.md)) |
 | `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; both settled receipts anchored and re-checked against the contract |
 | iBridge cross-chain route | Not yet established - no public interface from PortalDot |
-| Hosted deployment | Not yet established |
+| Hosted deployment | Real - web app and Postgres on Render, watcher on an always-on server, serving the same settled transfers and receipts |
 
 The core flow is proven on chain: real signed transfers were quoted, verified, finalized, measured, receipted and anchored in `IntentRegistry` (see [docs/evidence.md](docs/evidence.md)).
-What remains is an iBridge route once PortalDot publishes an interface, and a hosted deployment.
+What remains is an iBridge route once PortalDot publishes an interface.
 
 ## Tests
 
@@ -404,14 +405,30 @@ pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
 
 ## Deploy
 
-### Web app
+The live deployment splits into two parts.
 
-Any Node.js host that runs `next build` and `next start` works, with the shared variables set and a reachable Postgres.
+### Web app and database (Render)
 
-### Watcher
+`render.yaml` is a Render Blueprint for the web app and Postgres, both on free plans in Frankfurt.
+The web app reaches the database over Render's private network.
+From the internet the database accepts only the watcher server's IP, over TLS.
+Any other Node.js host that runs `next build` and `next start --port $PORT` works too.
 
-Run `pnpm worker` as a long-lived process next to the database.
+### Watcher (always-on server)
+
+The watcher must run nonstop, so it runs on a small always-on server under PM2:
+
+```bash
+git clone https://github.com/Saber1Y/RelayMesh.git relaymesh && cd relaymesh
+corepack pnpm install --frozen-lockfile --filter "@relaymesh/worker..." --filter "@relaymesh/db..."
+# .env: DATABASE_URL (external URL with ?sslmode=require), INTENT_REGISTRY_ADDRESS, RELAYER_PRIVATE_KEY
+node --import tsx --env-file=.env packages/db/src/migrate-cli.ts
+pm2 start apps/worker/ecosystem.config.cjs && pm2 save
+```
+
+It uses about 170 MB once started.
 Keep it running: the node only keeps recent historical state, so a long outage can leave transfers unmeasurable (they are flagged, not guessed).
+Run only one watcher per relayer key.
 
 ### Contract
 
@@ -452,7 +469,7 @@ The polkadot.js, viem and Drizzle maintainers.
 
 - Add the iBridge provider when PortalDot publishes a programmatic interface.
 - Add a second route to make ranking meaningful across providers.
-- Webhooks for integrators and a hosted deployment.
+- Webhooks for integrators.
 
 ## Disclaimer and license
 
