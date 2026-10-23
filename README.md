@@ -381,6 +381,7 @@ pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
 | `PORTALDOT_V3_WS_URL` | Substrate WebSocket endpoint |
 | `PORTALDOT_V3_EVM_RPC_URL` | EVM JSON-RPC endpoint |
 | `PORTALDOT_V3_EVM_CHAIN_ID` | Expected EVM chain ID (420420777) |
+| `PORTALDOT_V3_EXPLORER_URL` | Block explorer for links (defaults to the official V3 testnet explorer) |
 | `DATABASE_URL` | Postgres connection string |
 | `TEST_DATABASE_URL` | Postgres database for integration tests (must be named `relaymesh_test`) |
 

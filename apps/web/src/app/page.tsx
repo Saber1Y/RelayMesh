@@ -115,7 +115,7 @@ export default async function LandingPage() {
                   {formatAmount(latest.intent.source.amount, latest.intent.source.chain)} to {shortHash(latest.intent.destination.recipient)}
                 </Link>
               </div>
-              <Timeline history={history} wsUrl={v3Config.wsUrl} file={`intent_${shortHash(latest.intent.intentId, 6, 4)}.log`} />
+              <Timeline history={history} explorerUrl={v3Config.explorerUrl} file={`intent_${shortHash(latest.intent.intentId, 6, 4)}.log`} />
             </div>
           ) : (
             <div className="rounded-[18px] border border-line bg-surface p-6 shadow-panel">

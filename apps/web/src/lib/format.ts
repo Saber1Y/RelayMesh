@@ -43,9 +43,9 @@ export const STATUS_META: Record<IntentStatus, { label: string; tone: Tone; desc
 };
 
 /**
- * polkadot.js explorer link for a V3 block. Prefer the block number: it is the same for the Substrate
+ * PortalDot explorer link for a V3 block. Prefer the block number: it is the same for the Substrate
  * and EVM views of a block, while EVM evidence carries an EVM-style hash the explorer cannot look up.
  */
-export function explorerBlockUrl(wsUrl: string, block: string | number | bigint): string {
-  return `https://polkadot.js.org/apps/?rpc=${encodeURIComponent(wsUrl)}#/explorer/query/${block.toString()}`;
+export function explorerBlockUrl(explorerUrl: string, block: string | number | bigint): string {
+  return `${explorerUrl}/#/blocks/${block.toString()}`;
 }

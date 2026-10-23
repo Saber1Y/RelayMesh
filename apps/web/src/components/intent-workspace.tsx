@@ -24,10 +24,12 @@ const PRE_SOURCE = new Set(["DRAFT", "QUOTED", "AWAITING_SIGNATURE"]);
 export function IntentWorkspace({
   initial,
   wsUrl,
+  explorerUrl,
   unavailableProviders,
 }: {
   initial: WireView;
   wsUrl: string;
+  explorerUrl: string;
   unavailableProviders: { name: string; reason: string }[];
 }) {
   const [view, setView] = useState(initial);
@@ -142,7 +144,7 @@ export function IntentWorkspace({
         </div>
 
         <aside className="grid content-start gap-4">
-          <Timeline history={view.history} wsUrl={wsUrl} />
+          <Timeline history={view.history} explorerUrl={explorerUrl} />
           {view.selectedQuoteId && (
             <Link
               href={`/intents/${intent.intentId}/receipt`}

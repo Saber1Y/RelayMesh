@@ -23,7 +23,7 @@ export default async function IntentPage({ params }: { params: Promise<{ intentI
 
   return (
     <PageShell>
-      <IntentWorkspace initial={wire} wsUrl={v3Config.wsUrl} unavailableProviders={unavailable} />
+      <IntentWorkspace initial={wire} wsUrl={v3Config.wsUrl} explorerUrl={v3Config.explorerUrl} unavailableProviders={unavailable} />
     </PageShell>
   );
 }

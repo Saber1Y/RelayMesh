@@ -20,7 +20,7 @@ const EVENT_STYLE: Record<IntentStatus, { tag: string; className: string }> = {
 };
 
 /** Append-only status history rendered as a settlement log, with the evidence recorded at each step. */
-export function Timeline({ history, wsUrl, file = "settlement.log" }: { history: Wire<StatusEvent>[]; wsUrl: string; file?: string }) {
+export function Timeline({ history, explorerUrl, file = "settlement.log" }: { history: Wire<StatusEvent>[]; explorerUrl: string; file?: string }) {
   return (
     <section className="enter overflow-hidden rounded-[18px] border border-line bg-surface shadow-lift" style={stagger(2)} aria-label="Timeline">
       <div className="flex items-center gap-2.5 border-b border-line bg-raised/50 px-5 py-3">
@@ -59,7 +59,7 @@ export function Timeline({ history, wsUrl, file = "settlement.log" }: { history:
                       <dt>block</dt>
                       <dd>
                         <a
-                          href={explorerBlockUrl(wsUrl, e.blockNumber ?? e.blockHash ?? "")}
+                          href={explorerBlockUrl(explorerUrl, e.blockNumber ?? e.blockHash ?? "")}
                           target="_blank"
                           rel="noreferrer"
                           className="inline-flex items-center gap-1 text-accent hover:underline"

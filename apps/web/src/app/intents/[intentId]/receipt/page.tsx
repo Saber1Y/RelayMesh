@@ -22,7 +22,7 @@ const MODE_TEXT: Record<string, string> = {
   provider_report_only: "Provider report only, not independently verified",
 };
 
-function LegRows({ leg, wsUrl }: { leg: ReceiptLeg; wsUrl: string }) {
+function LegRows({ leg, explorerUrl }: { leg: ReceiptLeg; explorerUrl: string }) {
   return (
     <>
       <Row label="Transaction" compact>
@@ -37,7 +37,7 @@ function LegRows({ leg, wsUrl }: { leg: ReceiptLeg; wsUrl: string }) {
       <Row label="Block" compact>
         {leg.blockHash ? (
           <span className="inline-flex items-center gap-1">
-            <a href={explorerBlockUrl(wsUrl, leg.blockNumber ?? leg.blockHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+            <a href={explorerBlockUrl(explorerUrl, leg.blockNumber ?? leg.blockHash)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
               <Mono>{leg.blockNumber !== null ? `#${leg.blockNumber}` : shortHash(leg.blockHash)}</Mono>
               <ArrowSquareOut size={12} />
             </a>
@@ -175,12 +175,12 @@ export default async function ReceiptPage({ params }: { params: Promise<{ intent
       <div className="grid gap-6 md:grid-cols-2">
         <Panel title="Source leg" description="PortalDot V3 Substrate" index={2}>
           <dl className="divide-y divide-line">
-            <LegRows leg={source} wsUrl={v3Config.wsUrl} />
+            <LegRows leg={source} explorerUrl={v3Config.explorerUrl} />
           </dl>
         </Panel>
         <Panel title="Destination leg" description="PortalDot V3 EVM" index={3}>
           <dl className="divide-y divide-line">
-            <LegRows leg={destination} wsUrl={v3Config.wsUrl} />
+            <LegRows leg={destination} explorerUrl={v3Config.explorerUrl} />
           </dl>
         </Panel>
       </div>

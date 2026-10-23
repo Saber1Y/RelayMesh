@@ -2,6 +2,7 @@ export interface PortaldotV3Config {
   wsUrl: string;
   evmRpcUrl: string;
   evmChainId: number;
+  explorerUrl: string;
 }
 
 // Defaults are the V3 testnet values confirmed by the PortalDot team on 2026-10-20.
@@ -9,6 +10,8 @@ const DEFAULTS: PortaldotV3Config = {
   wsUrl: "wss://test-node-v3.portaldot.dev",
   evmRpcUrl: "https://test-evm-rpc-v3.portaldot.dev",
   evmChainId: 420420777,
+  // Official V3 testnet explorer, announced by PortalDot with the V3 upgrade.
+  explorerUrl: "https://scanner-testnet-v3.portaldot.dev",
 };
 
 export function loadPortaldotV3Config(env: NodeJS.ProcessEnv = process.env): PortaldotV3Config {
@@ -17,12 +20,14 @@ export function loadPortaldotV3Config(env: NodeJS.ProcessEnv = process.env): Por
   const evmChainId = env.PORTALDOT_V3_EVM_CHAIN_ID
     ? Number(env.PORTALDOT_V3_EVM_CHAIN_ID)
     : DEFAULTS.evmChainId;
+  const explorerUrl = (env.PORTALDOT_V3_EXPLORER_URL || DEFAULTS.explorerUrl).replace(/\/+$/, "");
 
   if (!/^wss?:\/\//.test(wsUrl)) throw new Error(`PORTALDOT_V3_WS_URL must be a ws(s) URL, got "${wsUrl}"`);
   if (!/^https?:\/\//.test(evmRpcUrl)) throw new Error(`PORTALDOT_V3_EVM_RPC_URL must be an http(s) URL, got "${evmRpcUrl}"`);
+  if (!/^https?:\/\//.test(explorerUrl)) throw new Error(`PORTALDOT_V3_EXPLORER_URL must be an http(s) URL, got "${explorerUrl}"`);
   if (!Number.isSafeInteger(evmChainId) || evmChainId <= 0) {
     throw new Error(`PORTALDOT_V3_EVM_CHAIN_ID must be a positive integer, got "${env.PORTALDOT_V3_EVM_CHAIN_ID}"`);
   }
 
-  return { wsUrl, evmRpcUrl, evmChainId };
+  return { wsUrl, evmRpcUrl, evmChainId, explorerUrl };
 }
