@@ -1,32 +1,70 @@
 import { describe, expect, it } from "vitest";
-import { scanRanges } from "./watcher";
+import { firstBlockAtOrAfter, mergeRanges } from "./watcher";
 
-const NOW = 1_800_000_000;
-const LIFETIME = 1_800;
-
-describe("scanRanges", () => {
-  it("returns nothing when no plans are pending", () => {
-    expect(scanRanges([], 10_000n, NOW, LIFETIME)).toEqual([]);
+describe("mergeRanges", () => {
+  it("returns nothing for no ranges", () => {
+    expect(mergeRanges([])).toEqual([]);
   });
 
-  it("keeps a window that is still open running to the finalized head", () => {
-    // Plan 60 s old: start = 10_000 - ceil(60 / 3) - 50.
-    expect(scanRanges([NOW - 60], 10_000n, NOW, LIFETIME)).toEqual([{ start: 9_930n, end: 10_000n }]);
+  it("sorts, merges overlapping and touching ranges, and keeps separate ones apart", () => {
+    const ranges = [
+      { start: 500n, end: 600n },
+      { start: 10n, end: 20n },
+      { start: 15n, end: 30n },
+      { start: 31n, end: 40n },
+    ];
+    expect(mergeRanges(ranges)).toEqual([
+      { start: 10n, end: 40n },
+      { start: 500n, end: 600n },
+    ]);
   });
 
-  it("bounds a closed window with slow-block ends and fast-block starts", () => {
-    // Created 1 day ago: start = 100_000 - 86_400 / 3 - 50; the window closed 84_600 s ago, 7_050 blocks back at 12 s, plus 50.
-    expect(scanRanges([NOW - 86_400], 100_000n, NOW, LIFETIME)).toEqual([{ start: 71_150n, end: 93_000n }]);
+  it("does not modify its input", () => {
+    const input = [{ start: 1n, end: 5n }, { start: 3n, end: 9n }];
+    mergeRanges(input);
+    expect(input[0]).toEqual({ start: 1n, end: 5n });
+  });
+});
+
+describe("firstBlockAtOrAfter", () => {
+  const GENESIS = 1_790_000_000;
+  /** A chain whose block n was produced at `time(n)`, counting the reads the search makes. */
+  function chain(time: (n: bigint) => number) {
+    const reads: bigint[] = [];
+    return {
+      reads,
+      timeOf: async (n: bigint) => {
+        reads.push(n);
+        return time(n);
+      },
+    };
+  }
+  const regular = (n: bigint) => GENESIS + Number(n) * 6;
+
+  it("finds the exact block on a regular chain with a handful of reads", async () => {
+    const c = chain(regular);
+    expect(await firstBlockAtOrAfter(GENESIS + 122_911 * 6, 160_000n, c.timeOf)).toBe(122_911n);
+    expect(await firstBlockAtOrAfter(GENESIS + 122_911 * 6 - 5, 160_000n, c.timeOf)).toBe(122_911n);
+    expect(c.reads.length).toBeLessThan(12);
   });
 
-  it("merges overlapping windows and keeps separate ones apart", () => {
-    const ranges = scanRanges([NOW - 86_400, NOW - 86_300, NOW - 60], 100_000n, NOW, LIFETIME);
-    expect(ranges).toHaveLength(2);
-    expect(ranges[0]?.end).toBeLessThan(ranges[1]?.start ?? 0n);
-    expect(ranges[1]?.end).toBe(100_000n);
+  it("stays logarithmic when block times are irregular", async () => {
+    // A long stall after block 1_000 (an hour without blocks), then 2 s blocks.
+    const c = chain((n) => (n <= 1_000n ? GENESIS + Number(n) * 6 : GENESIS + 6_000 + 3_600 + Number(n - 1_000n) * 2));
+    const target = GENESIS + 6_000 + 3_600 + 50_000 * 2;
+    expect(await firstBlockAtOrAfter(target, 200_000n, c.timeOf)).toBe(51_000n);
+    expect(c.reads.length).toBeLessThan(40);
   });
 
-  it("never returns negative heights", () => {
-    expect(scanRanges([NOW - 1_000_000], 100n, NOW, LIFETIME)[0]?.start).toBe(0n);
+  it("returns the head plus one for a time no block has reached yet", async () => {
+    const c = chain(regular);
+    expect(await firstBlockAtOrAfter(GENESIS + 1_000_000, 1_000n, c.timeOf)).toBe(1_001n);
+    expect(c.reads).toEqual([1_000n]);
+  });
+
+  it("returns block 1 for times before the chain started, never genesis", async () => {
+    const c = chain(regular);
+    expect(await firstBlockAtOrAfter(GENESIS - 100, 1_000n, c.timeOf)).toBe(1n);
+    expect(c.reads).not.toContain(0n);
   });
 });

@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { BlockExtrinsic, BlockRef, EvmBalanceRead, ExtrinsicCheck, ExtrinsicVerification, V3ChainReader } from "@relaymesh/chains";
 import { createIntent, hashRequest, type IntentStatus, type Quote } from "@relaymesh/core";
 import {
+  advanceCursor,
   appendStatusEvent,
   connectDb,
   getCursor,
@@ -46,7 +47,8 @@ class FakeChain implements V3ChainReader {
   block(n: bigint): FakeBlock {
     let b = this.blocks.get(n);
     if (!b) {
-      b = { hash: hash32(n), timestamp: NOW, extrinsics: [] };
+      // One block per second, with block 100 produced at NOW.
+      b = { hash: hash32(n), timestamp: NOW + Number(n - 100n), extrinsics: [] };
       this.blocks.set(n, b);
     }
     return b;
@@ -158,14 +160,14 @@ beforeEach(async () => {
 });
 
 /** Creates an intent and drives it to AWAITING_SIGNATURE with a stored plan, through the real store functions. */
-async function awaitingIntent(amount = "100000000000000", sharedCallHex?: Hex) {
+async function awaitingIntent(amount = "100000000000000", sharedCallHex?: Hex, at = NOW) {
   const body = {
     requester: REQUESTER,
     source: { chain: "portaldot-v3-substrate", asset: "native", amount },
     destination: { chain: "portaldot-v3-evm", asset: "native", recipient: RECIPIENT },
-    constraints: { deadline: NOW + 600 },
+    constraints: { deadline: at + 600 },
   };
-  const { intent, intentHash } = createIntent(body, { now: NOW });
+  const { intent, intentHash } = createIntent(body, { now: at });
   await insertIntent(db, { intent, intentHash, idempotencyKey: `test-${crypto.randomUUID()}`, requestHash: hashRequest(body) });
   const quote: Quote = {
     quoteId: `q-${crypto.randomUUID()}`,
@@ -174,13 +176,13 @@ async function awaitingIntent(amount = "100000000000000", sharedCallHex?: Hex) {
     routeId: "v3-substrate-to-evm",
     expectedOutput: EXPECTED,
     fees: [{ kind: "network", chain: "portaldot-v3-substrate", asset: "native", amount: 1_490_601_551_715n, basis: "estimate" }],
-    retrievedAt: NOW,
-    expiresAt: NOW + 60,
+    retrievedAt: at,
+    expiresAt: at + 60,
   };
-  await recordQuotes(db, intent.intentId, [quote], NOW);
+  await recordQuotes(db, intent.intentId, [quote], at);
   // Identical requests (same signer, amount and destination) really do produce identical call bytes.
   const callHex = sharedCallHex ?? (`0x0603${(++callCounter).toString(16).padStart(8, "0")}` as Hex);
-  await selectQuote(db, intent.intentId, quote.quoteId, NOW + 1, {
+  await selectQuote(db, intent.intentId, quote.quoteId, at + 1, {
     planId: `plan-${crypto.randomUUID()}`,
     quoteId: quote.quoteId,
     kind: "substrate_call",
@@ -189,8 +191,8 @@ async function awaitingIntent(amount = "100000000000000", sharedCallHex?: Hex) {
     callHex,
     destinationAccount: OTHER,
     estimatedFee: 1n,
-    submitBefore: NOW + 60,
-    createdAt: NOW + 1,
+    submitBefore: at + 60,
+    createdAt: at + 1,
   });
   return { intent, intentHash, callHex };
 }
@@ -365,25 +367,34 @@ describe("finalized block scanner", () => {
     expect(bSource?.evidence?.blockNumber).toBe(105n);
   });
 
-  it("skips blocks from before the plan existed, limits blocks per pass, and never rewinds", async () => {
-    await awaitingIntent(); // plan created 29 s before "now"
+  it("starts at the plan's window, limits blocks per pass, and never rewinds", async () => {
+    await awaitingIntent(); // plan created at NOW + 1, block 101
     await runPass(ctx()); // cursor at finalized 100
     chain.finalized = 1_000n;
-    // The plan's window starts about 10 blocks back (3 s blocks) plus a 50-block margin: 940.
-    expect(await runPass(ctx())).toMatchObject({ scannedTo: 990n, caughtUp: false }); // at most 50 blocks per pass
+    expect(await runPass(ctx())).toMatchObject({ scannedTo: 150n, caughtUp: false }); // at most 50 blocks per pass
     chain.finalized = 120n; // a lagging node must not rewind progress
     await runPass(ctx());
-    expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(990n);
+    expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(150n);
+  });
+
+  it("jumps from an old cursor straight to the plan's window, located by block timestamps", async () => {
+    await advanceCursor(db, SOURCE_SCAN_CURSOR, 10n);
+    chain.finalized = 50_000n;
+    clock = NOW + 40_000;
+    for (let n = 20n; n < 60n; n++) chain.failReads.set(n, Infinity); // reading these would fail the pass
+    await awaitingIntent(undefined, undefined, NOW + 30_000); // plan created at NOW + 30_001, block 30_101
+    const pass = await runPass(ctx());
+    // First block at or after the plan time minus 30 s of clock skew is 30_071, less a 10-block margin.
+    expect(pass).toMatchObject({ errors: 0, scannedTo: 30_111n });
   });
 
   it("skips the gap after a stale plan's signing window has closed", async () => {
-    await awaitingIntent(); // plan created at NOW + 1, lifetime 1800 s
+    await awaitingIntent(); // plan created at NOW + 1, block 101, lifetime 1800 s
     await runPass(ctx()); // cursor at finalized 100
     clock = NOW + 10_000; // window closed long ago
     chain.finalized = 5_000n;
-    const pass = await runPass(ctx());
-    // Window ends about (10_000 - 1_801) / 12 = 684 blocks back, plus 50: block 4366. Nothing after it is scanned.
-    expect(pass.scannedTo).toBeLessThanOrEqual(4_366n);
+    // The window ends at the first block at or after NOW + 1 + 1_800 + 30 (block 1_931), plus 10.
+    for (let n = 1_942n; n < 5_000n; n++) chain.failReads.set(n, Infinity); // blocks past the window are never read
     for (let i = 0; i < 200 && !(await runPass(ctx())).caughtUp; i++);
     expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(5_000n);
   });

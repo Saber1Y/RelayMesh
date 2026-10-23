@@ -21,11 +21,8 @@ import type { Logger } from "./log";
 import { EVENT_LOOKBACK_BLOCKS, ZERO_ADDRESS, ZERO_HASH, type RegistryClient } from "./registry";
 
 export const SOURCE_SCAN_CURSOR = "source-scan";
-/** Block-time bounds for mapping wall-clock times to heights (V3 targets 6 s). Fast for starts, slow for ends. */
-const MIN_BLOCK_SECONDS = 3;
-const MAX_BLOCK_SECONDS = 12;
 /** Extra blocks added on both sides of every scan range. */
-const SCAN_WINDOW_MARGIN_BLOCKS = 50;
+const SCAN_WINDOW_MARGIN_BLOCKS = 10;
 /** Blocks fetched in parallel while scanning. Kept low: the public V3 node times out under bursts. */
 const SCAN_CONCURRENCY = 4n;
 /** Plans issued slightly after the block's own clock still count; validator clocks drift a little. */
@@ -113,33 +110,79 @@ async function eachIntent(ctx: WatcherContext, ids: Hex[], stage: string, fn: (i
   return errors;
 }
 
-/**
- * Block ranges that may contain a planned extrinsic: for each plan, from its creation to the end of
- * its signing lifetime, mapped to heights pessimistically (starts assume fast blocks, ends assume slow
- * blocks, both padded). Overlapping ranges are merged; the result is sorted.
- */
-export function scanRanges(planTimes: number[], finalized: bigint, now: number, lifetimeSeconds: number): { start: bigint; end: bigint }[] {
-  const margin = BigInt(SCAN_WINDOW_MARGIN_BLOCKS);
-  const heightAt = (t: number, blockSeconds: number) => {
-    const back = BigInt(Math.ceil(Math.max(0, now - t) / blockSeconds));
-    return finalized > back ? finalized - back : 0n;
-  };
-  const ranges = planTimes
-    .map((t) => {
-      const start = heightAt(t, MIN_BLOCK_SECONDS);
-      const endTime = t + lifetimeSeconds;
-      // A window that is still open extends to the finalized head.
-      const end = endTime >= now ? finalized : heightAt(endTime, MAX_BLOCK_SECONDS) + margin;
-      return { start: start > margin ? start - margin : 0n, end: end < finalized ? end : finalized };
-    })
-    .sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
+/** Merges block ranges into sorted, non-overlapping ones; touching ranges are joined. */
+export function mergeRanges(ranges: { start: bigint; end: bigint }[]): { start: bigint; end: bigint }[] {
+  const sorted = [...ranges].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
   const merged: { start: bigint; end: bigint }[] = [];
-  for (const r of ranges) {
+  for (const r of sorted) {
     const last = merged.at(-1);
     if (last && r.start <= last.end + 1n) last.end = r.end > last.end ? r.end : last.end;
     else merged.push({ ...r });
   }
   return merged;
+}
+
+/**
+ * First block whose timestamp is at or after `t`, or `head + 1` if none is yet. Block times only
+ * increase, so this interpolates on timestamps (blocks are regular, so a guess lands close) and falls
+ * back to bisection whenever a guess fails to halve the interval, which bounds the reads to O(log n).
+ */
+export async function firstBlockAtOrAfter(t: number, head: bigint, timeOf: (n: bigint) => Promise<number>): Promise<bigint> {
+  let hi = head;
+  let tHi = await timeOf(hi);
+  if (tHi < t) return head + 1n;
+  // Block 0 (genesis) carries no timestamp, so the search starts at block 1.
+  let lo = 1n;
+  let tLo = await timeOf(lo);
+  if (tLo >= t || hi <= lo) return lo;
+  // Invariant: timeOf(lo) < t <= timeOf(hi).
+  let bisect = false;
+  while (hi - lo > 1n) {
+    const width = hi - lo;
+    let mid = !bisect && tHi > tLo ? lo + (BigInt(t - tLo) * width) / BigInt(tHi - tLo) : lo + width / 2n;
+    if (mid <= lo) mid = lo + 1n;
+    if (mid >= hi) mid = hi - 1n;
+    const tMid = await timeOf(mid);
+    if (tMid < t) [lo, tLo] = [mid, tMid];
+    else [hi, tHi] = [mid, tMid];
+    bisect = (hi - lo) * 2n > width;
+  }
+  return hi;
+}
+
+// Heights found for plan times, per chain. Plans never change, so each is looked up once per process.
+const heightCache = new WeakMap<V3ChainReader, Map<number, bigint>>();
+
+/** Height of the first block at or after `t`, from on-chain block timestamps. */
+async function heightAtTime(ctx: WatcherContext, t: number, finalized: BlockRef): Promise<bigint> {
+  let cache = heightCache.get(ctx.chain);
+  if (!cache) heightCache.set(ctx.chain, (cache = new Map()));
+  const cached = cache.get(t);
+  if (cached !== undefined) return cached;
+  const height = await firstBlockAtOrAfter(t, finalized.number, (n) =>
+    withRetry(ctx, `timestamp of block ${n}`, async () => {
+      const hash = n === finalized.number ? finalized.hash : await ctx.chain.canonicalHash(n);
+      if (!hash) throw new Error(`Node has no canonical block at finalized height ${n}`);
+      return ctx.chain.blockTimestamp(hash);
+    }),
+  );
+  // Only a block that already exists is final; "not yet" must be asked again later.
+  if (height <= finalized.number) cache.set(t, height);
+  return height;
+}
+
+/**
+ * Blocks where a plan's extrinsic could have landed: from its creation to the end of its signing
+ * lifetime, located by block timestamps, widened by the clock-skew allowance and a small margin.
+ * A window that has not closed yet runs to the finalized head.
+ */
+async function planWindow(ctx: WatcherContext, createdAt: number, finalized: BlockRef): Promise<{ start: bigint; end: bigint }> {
+  const margin = BigInt(SCAN_WINDOW_MARGIN_BLOCKS);
+  const first = await heightAtTime(ctx, createdAt - CLOCK_SKEW_SECONDS, finalized);
+  const last = await heightAtTime(ctx, createdAt + ctx.config.signedTxLifetimeSeconds + CLOCK_SKEW_SECONDS, finalized);
+  const start = first > margin ? first - margin : 0n;
+  const end = last + margin < finalized.number ? last + margin : finalized.number;
+  return { start, end };
 }
 
 /**
@@ -168,7 +211,9 @@ async function scanForPlannedExtrinsics(ctx: WatcherContext, finalized: BlockRef
   // lifetime, so only those block ranges are scanned; gaps between them are skipped. This keeps a
   // stale cursor from forcing a crawl through thousands of irrelevant blocks on a slow node.
   const cursor = (await getCursor(ctx.db, SOURCE_SCAN_CURSOR)) ?? finalized.number - BigInt(ctx.config.scanBackfillBlocks);
-  const ranges = scanRanges(planTimes, finalized.number, ctx.now(), ctx.config.signedTxLifetimeSeconds);
+  const windows: { start: bigint; end: bigint }[] = [];
+  for (const t of new Set(planTimes)) windows.push(await planWindow(ctx, t, finalized));
+  const ranges = mergeRanges(windows);
   let start = cursor;
   let rangeEnd = finalized.number;
   const current = ranges.find((r) => r.end > cursor);
