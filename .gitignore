@@ -8,3 +8,6 @@ coverage/
 .DS_Store
 contracts/artifacts/
 contracts/cache/
+
+# Local copy of the hosted database URL (contains its password)
+.render-db-url
