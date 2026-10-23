@@ -35,7 +35,7 @@ A 1 tPOT transfer from a Substrate account to an EVM address, signed in Talisman
 | Status | `SETTLED`, verification mode `destination_rpc_state` |
 | Receipt hash | `0x3dca870319888d95290f490166b9bcdf120b4dd75daee050fd11e91a34544ab5` |
 
-Explorer: [block #122911 on polkadot.js apps](https://polkadot.js.org/apps/?rpc=wss%3A%2F%2Ftest-node-v3.portaldot.dev#/explorer/query/122911)
+Explorer: [block #122911](https://scanner-testnet-v3.portaldot.dev/#/blocks/122911) · [extrinsic 122911-1](https://scanner-testnet-v3.portaldot.dev/#/extrinsics/122911-1) on the official PortalDot V3 testnet explorer
 
 Events of the extrinsic, as read from the block:
 
@@ -86,7 +86,7 @@ A 150 tPOT transfer from the same Substrate account to the RelayMesh deployer an
 | Status | `SETTLED`, verification mode `destination_rpc_state` |
 | Receipt hash | `0x58f6e2f9dae10f1a2313815ad21f8fd8b8ef1cc3f2d00f9e17db47ea793fb54e` |
 
-Explorer: [block #136917 on polkadot.js apps](https://polkadot.js.org/apps/?rpc=wss%3A%2F%2Ftest-node-v3.portaldot.dev#/explorer/query/136917)
+Explorer: [block #136917](https://scanner-testnet-v3.portaldot.dev/#/blocks/136917) · [extrinsic 136917-1](https://scanner-testnet-v3.portaldot.dev/#/extrinsics/136917-1) on the official PortalDot V3 testnet explorer
 
 From inclusion to settlement took about 21 seconds.
 
