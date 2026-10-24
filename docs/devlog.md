@@ -268,3 +268,18 @@ Restarted on the dev database, the watcher jumped from 136,750 to the head in on
   It settles at about 255 MB; the watcher at about 90 MB.
 
 Block links now go to PortalDot's official V3 testnet explorer, announced with the V3 upgrade.
+
+## 2026-10-24: A real fork on V3, and how the watcher handles it now
+
+A 5 tPOT transfer (intent `0xb253694179b26d2406cc81346b60fe17`) was reported in block #172004 with hash `0x7a957deb…7762e7`.
+GRANDPA finalized a different block at that height, `0x5ded1c24…2db6e43`, and the watcher flagged the intent for review, saying the extrinsic was not in the finalized block.
+That message was wrong: it compared block hashes and never looked inside the winning block.
+Both competing blocks had included the same extrinsic (`0x6dbf8b26…8f715a4`, index 1, `ExtrinsicSuccess`), so the funds did arrive.
+
+Now, when a reported block loses a fork, the watcher looks for the same extrinsic hash on the finalized chain: first at the same height, then up to 64 blocks later (the default mortal era, after which the extrinsic can no longer be included), then up to 8 blocks earlier.
+If it is found, the extrinsic is re-verified in that block and settlement continues with it as evidence, keeping the reported block hash in the evidence details.
+While part of that window is not final yet, the intent keeps waiting.
+Only when the whole window is final without the extrinsic is the intent flagged, and the reason names the blocks that were searched.
+Run against this transfer, the search finds it in finalized block #172004 (`0x5ded1c24…`).
+
+Review is final in the state machine, so intent `0xb2536941…` stays in review; its timeline keeps both observations.
