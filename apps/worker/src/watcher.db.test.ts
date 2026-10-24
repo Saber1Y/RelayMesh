@@ -272,14 +272,58 @@ describe("source confirmation and destination measurement", () => {
     expect((await statuses(intent.intentId)).at(-1)).toBe("SOURCE_SUBMITTED");
   });
 
-  it("flags a reported block that lost a fork", async () => {
+  /** The browser saw `reported`, but the finalized chain has a different block at its height. */
+  function loseFork(n: bigint, keepExtrinsic: boolean): Hex {
+    const reported = chain.block(n);
+    const winner = { hash: hash32(n, "ff"), timestamp: reported.timestamp, extrinsics: keepExtrinsic ? reported.extrinsics : [] };
+    chain.blocks.set(n, winner);
+    return winner.hash;
+  }
+
+  it("settles when the block that won the fork holds the same extrinsic", async () => {
+    const { intent, callHex } = await awaitingIntent();
+    const txHash = await includeAndReport(intent.intentId, callHex, 95n);
+    const reportedHash = chain.block(95n).hash;
+    const winnerHash = loseFork(95n, true);
+    chain.setDelta(RECIPIENT, 95n, 0n, EXPECTED);
+    await runPass(ctx());
+    const history = (await loadIntent(db, intent.intentId))?.history ?? [];
+    expect(history.at(-1)?.status).toBe("SETTLED");
+    const confirmed = history.find((e) => e.status === "SOURCE_CONFIRMED");
+    expect(confirmed?.reason).toMatch(/lost a fork; the same extrinsic is in finalized block 95/);
+    expect(confirmed?.evidence).toMatchObject({ txHash, blockHash: winnerHash, blockNumber: 95n, finalized: true });
+    expect(confirmed?.evidence?.details?.reportedBlockHash).toBe(reportedHash);
+  });
+
+  it("follows an extrinsic that was included again a few blocks later", async () => {
+    const { intent, callHex } = await awaitingIntent();
+    const txHash = await includeAndReport(intent.intentId, callHex, 95n);
+    loseFork(95n, false);
+    chain.block(97n).extrinsics.push({ index: 1, hash: txHash, callHex, signer: REQUESTER, success: true });
+    chain.setDelta(RECIPIENT, 97n, 0n, EXPECTED);
+    await runPass(ctx());
+    const history = (await loadIntent(db, intent.intentId))?.history ?? [];
+    expect(history.at(-1)?.status).toBe("SETTLED");
+    expect(history.find((e) => e.status === "SOURCE_CONFIRMED")?.evidence?.blockNumber).toBe(97n);
+  });
+
+  it("waits while the extrinsic could still appear in blocks that are not final", async () => {
     const { intent, callHex } = await awaitingIntent();
     await includeAndReport(intent.intentId, callHex, 95n);
-    chain.block(95n).hash = hash32(95n, "ff"); // the finalized chain has a different block at 95
+    loseFork(95n, false); // finalized head is 100, the search window runs to 159
+    await runPass(ctx());
+    expect((await statuses(intent.intentId)).at(-1)).toBe("SOURCE_SUBMITTED");
+  });
+
+  it("flags a lost fork only once the whole window is final without the extrinsic", async () => {
+    const { intent, callHex } = await awaitingIntent();
+    await includeAndReport(intent.intentId, callHex, 95n);
+    loseFork(95n, false);
+    chain.finalized = 200n;
     await runPass(ctx());
     const last = (await loadIntent(db, intent.intentId))?.history.at(-1);
     expect(last?.status).toBe("NEEDS_REVIEW");
-    expect(last?.reason).toMatch(/replaced on the finalized chain/);
+    expect(last?.reason).toMatch(/replaced on the finalized chain .* in no finalized block from 87 to 159/);
   });
 
   it("flags a short delivery and keeps the measurement", async () => {

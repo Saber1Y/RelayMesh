@@ -25,6 +25,13 @@ export const SOURCE_SCAN_CURSOR = "source-scan";
 const SCAN_WINDOW_MARGIN_BLOCKS = 10;
 /** Blocks fetched in parallel while scanning. Kept low: the public V3 node times out under bursts. */
 const SCAN_CONCURRENCY = 4n;
+/**
+ * Where to look for an extrinsic whose reported block lost a fork. polkadot.js signs with a 64-block
+ * mortal era by default, so it cannot be included later than that; a fork rarely starts more than a
+ * few blocks back.
+ */
+const FORK_SEARCH_AFTER_BLOCKS = 64n;
+const FORK_SEARCH_BEFORE_BLOCKS = 8n;
 /** Plans issued slightly after the block's own clock still count; validator clocks drift a little. */
 const CLOCK_SKEW_SECONDS = 30;
 
@@ -313,22 +320,32 @@ async function confirmSources(ctx: WatcherContext, finalized: BlockRef, summary:
     if (finalized.number < source.blockNumber) return; // not final yet
 
     const now = stamp(ctx, stored);
+    let block: BlockRef = { number: source.blockNumber, hash: source.blockHash };
+    let reason = `block ${source.blockNumber} is finalized and canonical`;
     const canonical = await ctx.chain.canonicalHash(source.blockNumber);
     if (canonical !== source.blockHash) {
-      await appendStatusEvent(ctx.db, intentId, {
-        status: "NEEDS_REVIEW",
-        at: now,
-        reason: `block ${source.blockNumber} was replaced on the finalized chain (finalized hash ${canonical ?? "unknown"}); the reported extrinsic is not in it`,
-      });
-      summary.flagged++;
-      return;
+      // The reported block lost a fork. The same extrinsic is usually in the block that won, or in
+      // one shortly after, so look for it on the finalized chain before drawing any conclusion.
+      const search = await findOnFinalizedChain(ctx, source.txHash, source.blockNumber, finalized);
+      if (search.kind === "pending") return; // part of the window is not final yet
+      if (search.kind === "missing") {
+        await appendStatusEvent(ctx.db, intentId, {
+          status: "NEEDS_REVIEW",
+          at: now,
+          reason: `block ${source.blockNumber} was replaced on the finalized chain (finalized hash ${canonical ?? "unknown"}), and the extrinsic is in no finalized block from ${search.from} to ${search.to}`,
+        });
+        summary.flagged++;
+        return;
+      }
+      block = search.block;
+      reason = `reported block ${source.blockNumber} lost a fork; the same extrinsic is in finalized block ${block.number}`;
     }
 
     const plans = (await listExecutionPlans(ctx.db, intentId)).filter((p) => p.quoteId === stored.selectedQuoteId);
     const plan = plans.find((p) => p.planId === source.details?.planId) ?? plans[0];
     if (!plan) throw new Error("No execution plan for the selected quote");
     const result = await ctx.chain.verifyExtrinsic({
-      blockHash: source.blockHash,
+      blockHash: block.hash,
       txHash: source.txHash,
       expectedCallHex: plan.callHex,
       expectedSigner: stored.intent.requester,
@@ -346,11 +363,48 @@ async function confirmSources(ctx: WatcherContext, finalized: BlockRef, summary:
     await appendStatusEvent(ctx.db, intentId, {
       status: "SOURCE_CONFIRMED",
       at: now,
-      reason: `block ${source.blockNumber} is finalized and canonical`,
-      evidence: { ...source, method: "substrate_finalized_block", finalized: true, observedAt: now },
+      reason,
+      evidence: {
+        ...source,
+        method: "substrate_finalized_block",
+        blockNumber: block.number,
+        blockHash: block.hash,
+        finalized: true,
+        observedAt: now,
+        details: {
+          ...source.details,
+          extrinsicIndex: String(result.extrinsicIndex),
+          ...(block.hash !== source.blockHash && { reportedBlockHash: source.blockHash }),
+        },
+      },
     });
     summary.confirmed++;
   });
+}
+
+/**
+ * Where a signed extrinsic from a block that lost a fork ended up on the finalized chain. It can sit in
+ * the competing block at the same height, or be included again a little later while its mortal era
+ * lasts; if the fork began earlier, the winning chain may hold it a few blocks before.
+ */
+async function findOnFinalizedChain(
+  ctx: WatcherContext,
+  txHash: Hex,
+  reportedAt: bigint,
+  finalized: BlockRef,
+): Promise<{ kind: "found"; block: BlockRef } | { kind: "pending" } | { kind: "missing"; from: bigint; to: bigint }> {
+  const from = reportedAt > FORK_SEARCH_BEFORE_BLOCKS ? reportedAt - FORK_SEARCH_BEFORE_BLOCKS : 1n;
+  const to = reportedAt + FORK_SEARCH_AFTER_BLOCKS;
+  const heights: bigint[] = [];
+  for (let n = reportedAt; n <= to && n <= finalized.number; n++) heights.push(n);
+  for (let n = reportedAt - 1n; n >= from; n--) heights.push(n);
+  for (const n of heights) {
+    const hash = await withRetry(ctx, `block ${n}`, () => ctx.chain.canonicalHash(n));
+    if (!hash) continue;
+    const extrinsics = await withRetry(ctx, `block ${n}`, () => ctx.chain.blockExtrinsics(hash));
+    if (extrinsics.some((ex) => ex.hash === txHash)) return { kind: "found", block: { number: n, hash } };
+  }
+  return finalized.number < to ? { kind: "pending" } : { kind: "missing", from, to };
 }
 
 /** SOURCE_CONFIRMED -> DESTINATION_PENDING. Kept as its own step so the timeline shows when measurement began. */
