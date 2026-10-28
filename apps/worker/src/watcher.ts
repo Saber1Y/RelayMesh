@@ -18,7 +18,7 @@ import {
   type StoredIntent,
 } from "@relaymesh/db";
 import type { Logger } from "./log";
-import { EVENT_LOOKBACK_BLOCKS, ZERO_ADDRESS, ZERO_HASH, type RegistryClient } from "./registry";
+import { EVENT_LOOKBACK_BLOCKS, RelayerFundsError, ZERO_ADDRESS, ZERO_HASH, type RegistryClient } from "./registry";
 
 export const SOURCE_SCAN_CURSOR = "source-scan";
 /** Extra blocks added on both sides of every scan range. */
@@ -31,6 +31,8 @@ const SCAN_CONCURRENCY = 4n;
  * few blocks back.
  */
 const FORK_SEARCH_AFTER_BLOCKS = 64n;
+/** How long anchoring waits after finding the relayer unable to pay, before checking again. */
+const ANCHOR_FUNDS_RETRY_SECONDS = 600;
 const FORK_SEARCH_BEFORE_BLOCKS = 8n;
 /** Plans issued slightly after the block's own clock still count; validator clocks drift a little. */
 const CLOCK_SKEW_SECONDS = 30;
@@ -516,44 +518,67 @@ async function expireStale(ctx: WatcherContext, summary: PassSummary): Promise<v
   });
 }
 
+// When anchoring paused for lack of relayer funds, per registry: unix seconds to try again.
+const anchoringPausedUntil = new WeakMap<RegistryClient, number>();
+
 /** Writes intent and receipt hashes of settled intents to IntentRegistry, recovering from partial earlier attempts. */
 async function anchorReceipts(ctx: WatcherContext, summary: PassSummary): Promise<void> {
   const registry = ctx.registry;
   if (!registry) return;
   const ids = await listSettledWithoutReceiptAnchor(ctx.db);
   summary.errors += await eachIntent(ctx, ids, "anchor receipt", async (intentId) => {
-    const stored = await loadIntent(ctx.db, intentId);
-    const quote = stored && (await selectedQuote(ctx, stored));
-    if (!stored || !quote) throw new Error("Settled intent without a selected quote");
-    const receiptHash = hashReceipt(buildReceipt({ intent: stored.intent, intentHash: stored.intentHash, quote, history: stored.history }));
-    const routeId = keccak256(stringToBytes(quote.routeId));
-    const anchors = await listAnchors(ctx.db, intentId);
-    const anchorBase = { intentId, contractAddress: registry.address, chainId: registry.chainId };
-
-    const state = await registry.read(stored.intentHash);
-    if (state.recorder !== ZERO_ADDRESS && state.recorder !== registry.recorder) {
-      throw new Error(`Intent hash is already recorded by ${state.recorder}, not this relayer`);
+    // An unfunded relayer is an operator task, not an intent failure: say so once, then wait for
+    // funds instead of retrying a write that cannot succeed every pass. Settlement is unaffected.
+    if (ctx.now() < (anchoringPausedUntil.get(registry) ?? 0)) return;
+    try {
+      await anchorOne(ctx, registry, intentId, summary);
+    } catch (error) {
+      if (!(error instanceof RelayerFundsError)) throw error;
+      anchoringPausedUntil.set(registry, ctx.now() + ANCHOR_FUNDS_RETRY_SECONDS);
+      ctx.log.warn("relayer needs funding; anchoring paused", {
+        relayer: error.account,
+        balance: error.balance.toString(),
+        needed: error.needed.toString(),
+        retryInSeconds: ANCHOR_FUNDS_RETRY_SECONDS,
+        waiting: ids.length,
+      });
     }
-    if (state.receiptHash !== ZERO_HASH && state.receiptHash !== receiptHash) {
-      throw new Error(`Registry holds receipt ${state.receiptHash}, but the stored history hashes to ${receiptHash}`);
-    }
-
-    const recover = async (kind: "IntentRecorded" | "ReceiptRecorded") => {
-      const fromBlock = (await ctx.chain.finalizedHead()).number - EVENT_LOOKBACK_BLOCKS;
-      const tx = await registry.findEvent(kind, stored.intentHash, fromBlock > 0n ? fromBlock : 0n);
-      if (!tx) throw new Error(`Registry state shows ${kind} but no event was found in the last ${EVENT_LOOKBACK_BLOCKS} blocks`);
-      return tx;
-    };
-
-    if (!anchors.some((a) => a.step === "intent")) {
-      const tx = state.recorder === ZERO_ADDRESS ? await registry.recordIntent(stored.intentHash, routeId) : await recover("IntentRecorded");
-      await recordAnchor(ctx.db, { ...anchorBase, step: "intent", valueHash: stored.intentHash, ...tx });
-    }
-    const tx = state.receiptHash === ZERO_HASH ? await registry.recordReceipt(stored.intentHash, receiptHash) : await recover("ReceiptRecorded");
-    await recordAnchor(ctx.db, { ...anchorBase, step: "receipt", valueHash: receiptHash, ...tx });
-    summary.anchored++;
-    ctx.log.info("receipt anchored", { intentId, receiptHash, txHash: tx.txHash });
   });
+}
+
+/** Anchors one settled intent: its intent hash if not yet recorded, then its receipt hash. */
+async function anchorOne(ctx: WatcherContext, registry: RegistryClient, intentId: Hex, summary: PassSummary): Promise<void> {
+  const stored = await loadIntent(ctx.db, intentId);
+  const quote = stored && (await selectedQuote(ctx, stored));
+  if (!stored || !quote) throw new Error("Settled intent without a selected quote");
+  const receiptHash = hashReceipt(buildReceipt({ intent: stored.intent, intentHash: stored.intentHash, quote, history: stored.history }));
+  const routeId = keccak256(stringToBytes(quote.routeId));
+  const anchors = await listAnchors(ctx.db, intentId);
+  const anchorBase = { intentId, contractAddress: registry.address, chainId: registry.chainId };
+
+  const state = await registry.read(stored.intentHash);
+  if (state.recorder !== ZERO_ADDRESS && state.recorder !== registry.recorder) {
+    throw new Error(`Intent hash is already recorded by ${state.recorder}, not this relayer`);
+  }
+  if (state.receiptHash !== ZERO_HASH && state.receiptHash !== receiptHash) {
+    throw new Error(`Registry holds receipt ${state.receiptHash}, but the stored history hashes to ${receiptHash}`);
+  }
+
+  const recover = async (kind: "IntentRecorded" | "ReceiptRecorded") => {
+    const fromBlock = (await ctx.chain.finalizedHead()).number - EVENT_LOOKBACK_BLOCKS;
+    const tx = await registry.findEvent(kind, stored.intentHash, fromBlock > 0n ? fromBlock : 0n);
+    if (!tx) throw new Error(`Registry state shows ${kind} but no event was found in the last ${EVENT_LOOKBACK_BLOCKS} blocks`);
+    return tx;
+  };
+
+  if (!anchors.some((a) => a.step === "intent")) {
+    const tx = state.recorder === ZERO_ADDRESS ? await registry.recordIntent(stored.intentHash, routeId) : await recover("IntentRecorded");
+    await recordAnchor(ctx.db, { ...anchorBase, step: "intent", valueHash: stored.intentHash, ...tx });
+  }
+  const tx = state.receiptHash === ZERO_HASH ? await registry.recordReceipt(stored.intentHash, receiptHash) : await recover("ReceiptRecorded");
+  await recordAnchor(ctx.db, { ...anchorBase, step: "receipt", valueHash: receiptHash, ...tx });
+  summary.anchored++;
+  ctx.log.info("receipt anchored", { intentId, receiptHash, txHash: tx.txHash });
 }
 
 /** One watcher pass. Each stage reads fresh state, so passes are idempotent and safe to re-run after a crash. */

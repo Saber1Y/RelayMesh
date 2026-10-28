@@ -15,7 +15,7 @@ import {
   selectQuote,
 } from "@relaymesh/db";
 import type { Logger } from "./log";
-import { ZERO_ADDRESS, ZERO_HASH, type MinedTx, type RegistryClient, type RegistryState } from "./registry";
+import { RelayerFundsError, ZERO_ADDRESS, ZERO_HASH, type MinedTx, type RegistryClient, type RegistryState } from "./registry";
 import { runPass, SOURCE_SCAN_CURSOR, type WatcherContext } from "./watcher";
 
 // Test doubles: an in-memory V3 chain and registry. They model only what the watcher reads, so the
@@ -105,17 +105,22 @@ class FakeRegistry implements RegistryClient {
   state = new Map<Hex, RegistryState>();
   writes: string[] = [];
   events = new Map<string, MinedTx>();
+  /** When set, every write fails the way an unfunded relayer's does; `refused` counts those attempts. */
+  shortOfFunds = false;
+  refused = 0;
   private block = 500n;
 
   async read(intentHash: Hex) {
     return this.state.get(intentHash) ?? { recorder: ZERO_ADDRESS, routeId: ZERO_HASH, receiptHash: ZERO_HASH };
   }
   async recordIntent(intentHash: Hex, routeId: Hex) {
+    this.payOrRefuse();
     this.writes.push(`intent:${intentHash}`);
     this.state.set(intentHash, { recorder: this.recorder, routeId, receiptHash: ZERO_HASH });
     return this.mine(`IntentRecorded:${intentHash}`);
   }
   async recordReceipt(intentHash: Hex, receiptHash: Hex) {
+    this.payOrRefuse();
     this.writes.push(`receipt:${intentHash}`);
     const s = await this.read(intentHash);
     this.state.set(intentHash, { ...s, receiptHash });
@@ -123,6 +128,11 @@ class FakeRegistry implements RegistryClient {
   }
   async findEvent(kind: string, intentHash: Hex) {
     return this.events.get(`${kind}:${intentHash}`) ?? null;
+  }
+  private payOrRefuse(): void {
+    if (!this.shortOfFunds) return;
+    this.refused++;
+    throw new RelayerFundsError(this.recorder, 5_597_805_812_053_544_000n, 14_429_019_804_005_092_500n);
   }
   private mine(key: string): MinedTx {
     const tx = { txHash: hash32(++this.block, "cc"), blockNumber: this.block };
@@ -524,6 +534,27 @@ describe("registry anchoring", () => {
     fake.writes = [];
     await runPass(ctx());
     expect(fake.writes).toEqual([`receipt:${intentHash}`]);
+    expect((await listAnchors(db, intent.intentId)).map((a) => a.step)).toEqual(["intent", "receipt"]);
+  });
+
+  it("pauses anchoring with one warning when the relayer cannot pay, then resumes once funded", async () => {
+    const { intent } = await settledIntent();
+    const fake = registry as FakeRegistry;
+    fake.shortOfFunds = true;
+    const warnings: string[] = [];
+    const log: Logger = { ...silent, warn: (m) => void warnings.push(m) };
+
+    expect(await runPass({ ...ctx(), log })).toMatchObject({ settled: 1, anchored: 0, errors: 0 });
+    expect(warnings).toEqual(["relayer needs funding; anchoring paused"]);
+    expect(fake.refused).toBe(1);
+
+    await runPass({ ...ctx(), log }); // still paused: no write attempted, no new warning
+    expect(fake.refused).toBe(1);
+    expect(warnings).toHaveLength(1);
+
+    fake.shortOfFunds = false; // the operator funds the relayer
+    clock += 601;
+    expect(await runPass({ ...ctx(), log })).toMatchObject({ anchored: 1, errors: 0 });
     expect((await listAnchors(db, intent.intentId)).map((a) => a.step)).toEqual(["intent", "receipt"]);
   });
 

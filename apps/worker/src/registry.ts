@@ -27,6 +27,21 @@ export interface RegistryClient {
   findEvent(kind: "IntentRecorded" | "ReceiptRecorded", intentHash: Hex, fromBlock: bigint): Promise<MinedTx | null>;
 }
 
+/**
+ * The relayer cannot pay for a write. On PortalDot V3 most of a write's cost is Revive's storage
+ * deposit, about 11.5 tPOT per IntentRegistry write, so the account runs dry long before gas would.
+ */
+export class RelayerFundsError extends Error {
+  constructor(
+    readonly account: Hex,
+    readonly balance: bigint,
+    readonly needed: bigint,
+  ) {
+    super(`Relayer ${account} holds ${balance} wei but this write needs about ${needed}`);
+    this.name = "RelayerFundsError";
+  }
+}
+
 export const ZERO_ADDRESS: Hex = "0x0000000000000000000000000000000000000000";
 export const ZERO_HASH: Hex = `0x${"0".repeat(64)}`;
 
@@ -42,6 +57,15 @@ export function createRegistryClient(config: PortaldotV3Config, publicClient: Pu
   async function send(functionName: "recordIntent" | "recordReceipt", args: readonly [Hex, Hex]): Promise<MinedTx> {
     // Simulate first so a revert (already recorded, not recorder) surfaces as an error before paying fees.
     const { request } = await publicClient.simulateContract({ ...contract, functionName, args, account });
+    // Check the relayer can pay before signing: the node rejects an unaffordable write as an opaque
+    // "Invalid Transaction". The margin covers the fee cap sitting above the current gas price.
+    const [gas, gasPrice, balance] = await Promise.all([
+      publicClient.estimateContractGas({ ...contract, functionName, args, account }),
+      publicClient.getGasPrice(),
+      publicClient.getBalance({ address: account.address }),
+    ]);
+    const needed = (gas * gasPrice * 5n) / 4n;
+    if (balance < needed) throw new RelayerFundsError(account.address, balance, needed);
     const txHash = await wallet.writeContract(request);
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 120_000 });
     if (receipt.status !== "success") throw new Error(`${functionName} transaction ${txHash} reverted`);
