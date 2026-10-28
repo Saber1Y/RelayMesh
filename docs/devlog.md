@@ -299,3 +299,20 @@ The web app had also restarted four times since 24 Oct, each time out of heap me
 The cap is now 320 MB, with PM2 restarting only above 520 MB.
 
 The logo now matches the app header: a white graph mark on the accent purple, in `docs/brand/`, and the browser tab icon uses it instead of the old blue.
+
+## 2026-10-28: A public receipt checker, and the PortalDot bridge is live on mainnet
+
+The new **Verify** page lets anyone check a receipt without trusting RelayMesh.
+The visitor's browser hashes the receipt with the same canonical encoding the server uses, then reads `getIntent` from `IntentRegistry` directly through the V3 EVM RPC (it allows cross-origin requests), and searches the `ReceiptRecorded` event from the deploy block to show the anchoring transaction.
+It accepts an intent ID (the receipt is fetched from RelayMesh, then hashed locally, so a server serving a changed receipt would be caught) or pasted or dropped receipt JSON, which never leaves the browser.
+
+Checked live in the browser:
+
+- The 150 tPOT receipt matches: both hashes are `0x58f6e2f9…a793fb54e`, the route matches, and the anchoring transaction is `0x7b09dc97…` in block #136956.
+- The same receipt with one digit of the observed amount changed reports "Does not match the chain".
+- The 8 tPOT receipt reports "Receipt not anchored yet"; its browser-computed hash `0x3fc53859…` is exactly the value the watcher is waiting to write.
+
+The unit tests use the real downloaded 150 tPOT receipt as a fixture and assert that it re-hashes to the anchored value.
+
+While planning the next step, a read-only look at the PortalDot bridge (bridge.portaldot.dev, POT ↔ BSC on mainnet) showed real traffic: its Portaldot deposit address holds about 4,302 POT, and its BSC address has sent 474 transactions from a fixed 300,000,000 WPOT supply.
+Both sides are public, so RelayMesh can verify real bridge transfers without spending anything or using the bridge's API.
