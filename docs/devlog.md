@@ -283,3 +283,19 @@ Only when the whole window is final without the extrinsic is the intent flagged,
 Run against this transfer, the search finds it in finalized block #172004 (`0x5ded1c24…`).
 
 Review is final in the state machine, so intent `0xb2536941…` stays in review; its timeline keeps both observations.
+
+## 2026-10-28: Relayer out of tPOT, and a memory cap that was too tight
+
+A third transfer settled on 24 Oct (8 tPOT, block #172163), and its intent hash was anchored, but its receipt write was rejected with "Invalid Transaction" on every pass for four days.
+The relayer had run out of tPOT: each `IntentRegistry` write costs about 11.5 tPOT, almost all of it Revive's storage deposit, and the account was down to 5.6 tPOT after the deployment and five writes.
+The watcher retried the doomed write every pass, about 40,000 times, filling its error log.
+
+Now the registry client estimates each write's cost (gas times gas price, with a 25% margin for the fee cap) and compares it with the relayer's balance before signing.
+If the relayer cannot pay, the watcher logs one warning with the account, its balance and the amount needed, and pauses anchoring for 10 minutes before checking again.
+Settlement is unaffected; only the on-chain record waits.
+On the live server the watcher now logs that one warning and the error log stays empty.
+
+The web app had also restarted four times since 24 Oct, each time out of heap memory: when the V3 node is slow, the app reloads chain metadata, which briefly needs more than the 192 MB heap cap.
+The cap is now 320 MB, with PM2 restarting only above 520 MB.
+
+The logo now matches the app header: a white graph mark on the accent purple, in `docs/brand/`, and the browser tab icon uses it instead of the old blue.
