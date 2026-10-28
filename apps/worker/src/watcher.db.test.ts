@@ -494,11 +494,19 @@ describe("expiry", () => {
     await runPass(ctx());
     expect((await statuses(intent.intentId)).at(-1)).toBe("AWAITING_SIGNATURE");
 
-    clock = NOW + 1 + 1_800; // lifetime elapsed and the scanner is caught up
-    await runPass(ctx());
+    clock = NOW + 1 + 1_800; // lifetime elapsed in time and, below, in blocks (1,800 s = 300 blocks)
+    chain.finalized = 400n;
+    for (let i = 0; i < 20 && (await statuses(intent.intentId)).at(-1) === "AWAITING_SIGNATURE"; i++) await runPass(ctx());
     const last = (await loadIntent(db, intent.intentId))?.history.at(-1);
     expect(last?.status).toBe("EXPIRED");
     expect(last?.reason).toMatch(/no matching signed transaction/);
+  });
+
+  it("does not expire an awaiting-signature intent while the chain is stalled", async () => {
+    const { intent } = await awaitingIntent(); // plan created at NOW + 1; the chain stops at block 100
+    clock = NOW + 10_000; // hours of wall-clock time, but no new blocks, so a signed tx is still valid
+    await runPass(ctx());
+    expect((await statuses(intent.intentId)).at(-1)).toBe("AWAITING_SIGNATURE");
   });
 
   it("does not expire awaiting-signature intents while the scanner is behind", async () => {

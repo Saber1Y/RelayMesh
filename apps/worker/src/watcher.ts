@@ -31,6 +31,8 @@ const SCAN_CONCURRENCY = 4n;
  * few blocks back.
  */
 const FORK_SEARCH_AFTER_BLOCKS = 64n;
+/** V3's target block time, for turning the signing lifetime into a number of blocks. */
+const TARGET_BLOCK_SECONDS = 6;
 /** How long anchoring waits after finding the relayer unable to pay, before checking again. */
 const ANCHOR_FUNDS_RETRY_SECONDS = 600;
 const FORK_SEARCH_BEFORE_BLOCKS = 8n;
@@ -499,7 +501,7 @@ async function measureDestinations(ctx: WatcherContext, summary: PassSummary): P
  * passed, the longest plausible signed-transaction lifetime has elapsed since its last plan, and the
  * scanner has covered the chain up to the finalized head, so a late inclusion cannot be missed.
  */
-async function expireStale(ctx: WatcherContext, summary: PassSummary): Promise<void> {
+async function expireStale(ctx: WatcherContext, finalized: BlockRef, summary: PassSummary): Promise<void> {
   const now = ctx.now();
   const ids = await listIntentIdsByStatus(ctx.db, ["DRAFT", "QUOTED", "AWAITING_SIGNATURE"], 500);
   summary.errors += await eachIntent(ctx, ids, "expire", async (intentId) => {
@@ -511,6 +513,12 @@ async function expireStale(ctx: WatcherContext, summary: PassSummary): Promise<v
       const lastPlan = (await listExecutionPlans(ctx.db, intentId)).at(-1);
       const signableUntil = (lastPlan?.createdAt ?? 0) + ctx.config.signedTxLifetimeSeconds;
       if (now < signableUntil || !summary.caughtUp) return;
+      // A signed extrinsic's mortal era counts blocks, not seconds: while the chain is stalled it
+      // stays valid, so wall-clock time alone must never expire it. Require the finalized chain to
+      // have moved a full lifetime of blocks past the plan as well.
+      const planBlock = await heightAtTime(ctx, (lastPlan?.createdAt ?? 0) - CLOCK_SKEW_SECONDS, finalized);
+      const lifetimeBlocks = BigInt(Math.ceil(ctx.config.signedTxLifetimeSeconds / TARGET_BLOCK_SECONDS));
+      if (finalized.number < planBlock + lifetimeBlocks) return;
       reason = `deadline passed; finalized blocks through ${summary.scannedTo} contain no matching signed transaction`;
     }
     await appendStatusEvent(ctx.db, intentId, { status: "EXPIRED", at: stamp(ctx, stored), reason });
@@ -605,7 +613,7 @@ export async function runPass(ctx: WatcherContext): Promise<PassSummary> {
   await confirmSources(ctx, finalized, summary);
   await startDestinationChecks(ctx, summary);
   await measureDestinations(ctx, summary);
-  await expireStale(ctx, summary);
+  await expireStale(ctx, finalized, summary);
   await anchorReceipts(ctx, summary);
   return summary;
 }
