@@ -390,7 +390,8 @@ pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
 
 | Variable | Purpose |
 | --- | --- |
-| `INTENT_REGISTRY_ADDRESS` | Deployed `IntentRegistry`; anchoring is off unless set with the key below |
+| `INTENT_REGISTRY_ADDRESS` | Deployed `IntentRegistry`; anchoring is off unless set with the key below. The web app's receipt checker reads it too |
+| `INTENT_REGISTRY_DEPLOY_BLOCK` | Block the registry was deployed in (136936 on V3); lets the receipt checker show the anchoring transaction |
 | `RELAYER_PRIVATE_KEY` | EVM key that pays for registry writes |
 | `WATCHER_POLL_MS` | Delay between passes (default 6000) |
 | `WATCHER_SCAN_BACKFILL_BLOCKS` | First-start scan depth (default 150) |
