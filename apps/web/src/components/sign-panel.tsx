@@ -8,6 +8,7 @@ import type { Hex } from "viem";
 import type { ExecutionPlanRecord } from "@relaymesh/db";
 import { ApiRequestError, apiFetch, type Wire } from "@/lib/api";
 import { formatAmount, formatDuration, shortHash } from "@/lib/format";
+import { useChainStatus } from "@/lib/use-chain-status";
 import { connectWallets, decodeCall, signAndSubmit, type DecodedCall, type SubmitPhase } from "@/lib/wallet";
 import type { WireView } from "./intent-workspace";
 import { Button, Mono, Panel, Skeleton } from "./ui";
@@ -105,6 +106,7 @@ export function SignPanel({
   const remaining = plan.submitBefore - now;
   const expired = remaining <= 0;
   const busy = phase.kind !== "idle" && phase.kind !== "error";
+  const chain = useChainStatus();
 
   async function sign() {
     setPhase({ kind: "connecting" });
@@ -126,7 +128,7 @@ export function SignPanel({
       setPhase({ kind: "idle" });
       onSubmitted();
     } catch (error) {
-      setPhase({ kind: "error", message: error instanceof Error ? error.message : "Signing failed." });
+      setPhase({ kind: "error", message: signingErrorText(error) });
     }
   }
 
@@ -192,6 +194,14 @@ export function SignPanel({
           )}
         </div>
 
+        {chain.state === "stalled" && !expired && (
+          <p role="status" className="flex items-start gap-2 rounded-lg bg-caution-soft px-3 py-2 text-sm text-caution">
+            <WarningCircle size={16} className="mt-0.5 shrink-0" />
+            PortalDot V3 has not finalized a block for {formatDuration(chain.ageSeconds)}. If you sign now, the transfer waits in the queue until the chain resumes; RelayMesh
+            keeps watching for it.
+          </p>
+        )}
+
         {expired ? (
           <p className="rounded-lg bg-caution-soft px-3 py-2 text-sm text-caution">This signing window closed. Refresh quotes above to get a new route.</p>
         ) : (
@@ -216,4 +226,14 @@ export function SignPanel({
       </div>
     </Panel>
   );
+}
+
+/** Node rejections, in words a person can act on; anything unrecognised is shown as the node wrote it. */
+function signingErrorText(error: unknown): string {
+  const message = error instanceof Error ? error.message : "Signing failed.";
+  if (/\b1014\b|priority is too low/i.test(message)) {
+    return "Your account already has a transaction waiting in the node's queue with the same nonce, so the node refused this one. Wait for that transaction to be included (or to expire) before signing again; if it was this transfer, RelayMesh will find it on its own.";
+  }
+  if (/\b1010\b|inability to pay/i.test(message)) return "Your account cannot pay this transfer and its fee while keeping the minimum balance.";
+  return message;
 }
