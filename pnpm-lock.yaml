@@ -214,6 +214,9 @@ importers:
       '@relaymesh/chains':
         specifier: workspace:*
         version: link:../../packages/chains
+      '@relaymesh/contracts':
+        specifier: workspace:*
+        version: link:../../contracts
       '@relaymesh/core':
         specifier: workspace:*
         version: link:../../packages/core

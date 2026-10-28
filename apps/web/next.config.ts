@@ -8,7 +8,7 @@ loadEnvConfig(fileURLToPath(new URL("../..", import.meta.url)), process.env.NODE
 
 const nextConfig: NextConfig = {
   // Workspace packages ship TypeScript sources.
-  transpilePackages: ["@relaymesh/core", "@relaymesh/db", "@relaymesh/routes", "@relaymesh/chains"],
+  transpilePackages: ["@relaymesh/core", "@relaymesh/db", "@relaymesh/routes", "@relaymesh/chains", "@relaymesh/contracts"],
   // Server-only drivers stay as Node modules instead of being bundled.
   serverExternalPackages: ["postgres"],
   poweredByHeader: false,
