@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, ArrowSquareOut, DownloadSimple } from "@phosphor-icons/react/dist/ssr";
+import { ArrowLeft, ArrowRight, ArrowSquareOut, DownloadSimple, SealCheck } from "@phosphor-icons/react/dist/ssr";
 import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -124,13 +124,22 @@ export default async function ReceiptPage({ params }: { params: Promise<{ intent
               {receipt.verificationMode ? MODE_TEXT[receipt.verificationMode] : settled ? "" : "Not settled. This receipt shows what has been recorded so far."}
             </p>
           </div>
-          <a
-            href={`/api/intents/${intentId}/receipt?download=1`}
-            className="press group inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-sm font-medium text-accent-ink shadow-glow hover:-translate-y-0.5 hover:shadow-glow-strong"
-          >
-            <DownloadSimple size={16} className="transition-transform duration-200 group-hover:translate-y-px" />
-            Download JSON
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/verify?intent=${intentId}`}
+              className="press inline-flex items-center gap-2 rounded-full border border-line-strong px-5 py-2.5 text-sm font-medium text-ink hover:bg-raised"
+            >
+              <SealCheck size={16} />
+              Verify on chain
+            </Link>
+            <a
+              href={`/api/intents/${intentId}/receipt?download=1`}
+              className="press group inline-flex items-center gap-2 rounded-full bg-accent px-5 py-2.5 text-sm font-medium text-accent-ink shadow-glow hover:-translate-y-0.5 hover:shadow-glow-strong"
+            >
+              <DownloadSimple size={16} className="transition-transform duration-200 group-hover:translate-y-px" />
+              Download JSON
+            </a>
+          </div>
         </div>
       </div>
 
