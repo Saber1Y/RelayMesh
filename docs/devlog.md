@@ -316,3 +316,18 @@ The unit tests use the real downloaded 150 tPOT receipt as a fixture and assert 
 
 While planning the next step, a read-only look at the PortalDot bridge (bridge.portaldot.dev, POT ↔ BSC on mainnet) showed real traffic: its Portaldot deposit address holds about 4,302 POT, and its BSC address has sent 474 transactions from a fixed 300,000,000 WPOT supply.
 Both sides are public, so RelayMesh can verify real bridge transfers without spending anything or using the bridge's API.
+
+## 2026-10-28: The V3 testnet stalled, and expiry no longer trusts the clock alone
+
+PortalDot V3 stopped producing blocks at 12:45:54 UTC (block #232115).
+A 90 tPOT transfer signed at about 12:48 went into the node's transaction pool and stayed there, and a second transfer from the same account was refused with "1014: Priority is too low", because it reused the waiting transaction's nonce.
+
+That exposed a RelayMesh bug.
+The watcher expired an unsigned intent once its signing lifetime (30 minutes) had passed on the wall clock and the scanner had caught up.
+A signed extrinsic's mortal era counts blocks, not seconds, so during a stall it stays valid: the intent would have expired at about 13:18 UTC, and the transfer could still have landed after the chain resumed, moving funds that RelayMesh would then never settle.
+Expiry now also requires the finalized chain to have advanced a full lifetime of blocks (lifetime / 6 s) past the first block at or after the plan's creation.
+The fix was deployed at 13:00 UTC, before that intent could expire, and a new test keeps an intent signable through hours of wall-clock time with no new blocks.
+
+The app now says when this happens.
+`/api/network` reports how long ago the latest finalized block was produced, and past 90 seconds the header chip turns amber and reads "Paused" with the duration.
+The signing panel warns that a transfer signed during a stall waits in the queue, and node rejections such as 1014 and 1010 are explained in plain words.
