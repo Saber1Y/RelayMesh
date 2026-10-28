@@ -149,6 +149,10 @@ curl -s localhost:3010/api/intents/$INTENT_ID/receipt -D - | grep -i x-receipt-h
 
 `keccak256("relaymesh.receipt.v1\n" + file)` reproduces the hash; this was checked against a real download.
 
+The **Verify** page ([/verify](https://relaymesh.162-62-231-147.sslip.io/verify)) does this in the visitor's browser.
+Given an intent ID or a pasted receipt, it hashes the receipt locally and reads `IntentRegistry` straight from the V3 EVM RPC, so the verdict never relies on RelayMesh's server.
+It reports whether the receipt matches the chain, does not match (a changed receipt), is recorded but not anchored yet, or was never anchored, and shows the anchoring transaction.
+
 ## Architecture
 
 Two decisions shape everything else.
