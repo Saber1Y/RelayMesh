@@ -11,8 +11,10 @@ module.exports = {
       // Loopback only: the reverse proxy is the public entry point.
       args: "start --hostname 127.0.0.1 --port 3200",
       interpreter: "node",
-      node_args: "--max-old-space-size=192",
-      max_memory_restart: "450M",
+      // Reloading chain metadata after a slow node drops the connection briefly needs well over
+      // 192 MB of heap; at that cap the process ran out of memory and restarted (Oct 2026).
+      node_args: "--max-old-space-size=320",
+      max_memory_restart: "520M",
       exp_backoff_restart_delay: 1000,
       kill_timeout: 10000,
       time: true,
