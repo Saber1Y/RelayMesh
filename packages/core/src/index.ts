@@ -1,4 +1,5 @@
 export * from "./amount";
+export * from "./bridge";
 export * from "./canonical";
 export * from "./chains";
 export * from "./errors";
