@@ -1,6 +1,6 @@
 // RelayMesh watcher: confirms source finality, measures destination balance changes, settles or
 // flags intents, expires unsigned ones, and anchors receipt hashes in IntentRegistry.
-import { connectSubstrate, createV3ChainReader, createV3PublicClient, assertEvmChainId } from "@relaymesh/chains";
+import { connectSubstrate, createV3ChainReader, createV3PublicClient, assertEvmChainId, SERVER_RPC_TIMEOUT_MS } from "@relaymesh/chains";
 import { connectDb } from "@relaymesh/db";
 import { loadWorkerConfig } from "./config";
 import { jsonLogger as log } from "./log";
@@ -9,7 +9,7 @@ import { runPass } from "./watcher";
 
 const config = loadWorkerConfig();
 const { db, close } = connectDb(config.databaseUrl, { max: 4 });
-const api = await connectSubstrate(config.v3.wsUrl, { autoReconnectMs: 2_500 });
+const api = await connectSubstrate(config.v3.wsUrl, { autoReconnectMs: 2_500, timeoutMs: SERVER_RPC_TIMEOUT_MS });
 const evm = createV3PublicClient(config.v3);
 await assertEvmChainId(evm, config.v3.evmChainId);
 

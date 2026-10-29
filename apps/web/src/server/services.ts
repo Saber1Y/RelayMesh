@@ -1,6 +1,6 @@
 import "server-only";
 import type { ApiPromise } from "@polkadot/api";
-import { connectSubstrate, createV3NativeClient, loadPortaldotV3Config } from "@relaymesh/chains";
+import { connectSubstrate, createV3NativeClient, loadPortaldotV3Config, SERVER_RPC_TIMEOUT_MS } from "@relaymesh/chains";
 import { connectDb, type DbHandle } from "@relaymesh/db";
 import { IBridgeProvider, V3SubstrateToEvmProvider, type RouteProvider } from "@relaymesh/routes";
 
@@ -23,7 +23,7 @@ export function getDb(): DbHandle["db"] {
 
 export function getSubstrateApi(): Promise<ApiPromise> {
   if (!cache.__relaymeshApi) {
-    cache.__relaymeshApi = connectSubstrate(v3Config.wsUrl, { autoReconnectMs: 2_500 }).catch((error: unknown) => {
+    cache.__relaymeshApi = connectSubstrate(v3Config.wsUrl, { autoReconnectMs: 2_500, timeoutMs: SERVER_RPC_TIMEOUT_MS }).catch((error: unknown) => {
       // Do not cache a failed connection; the next request retries.
       cache.__relaymeshApi = undefined;
       throw error;

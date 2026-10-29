@@ -13,6 +13,12 @@ export interface SubstrateChainInfo {
   finalizedBlock: number;
 }
 
+/**
+ * Per-request timeout for long-running servers. Startup downloads about 1.1 MB of chain metadata,
+ * which the public V3 node has taken 60 s to serve while short of peers, so 30 s is not enough.
+ */
+export const SERVER_RPC_TIMEOUT_MS = 120_000;
+
 export interface ConnectOptions {
   timeoutMs?: number;
   /** Reconnect delay for long-running servers. 0 (default) fails fast instead of retrying forever, for scripts. */
