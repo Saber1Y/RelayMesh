@@ -1,6 +1,7 @@
 import "server-only";
 import type { ApiPromise } from "@polkadot/api";
-import { connectSubstrate, createV3NativeClient, loadPortaldotV3Config, SERVER_RPC_TIMEOUT_MS } from "@relaymesh/chains";
+import type { PublicClient } from "viem";
+import { connectSubstrate, createBscClient, createV3NativeClient, loadPortaldotBridgeConfig, loadPortaldotV3Config, SERVER_RPC_TIMEOUT_MS } from "@relaymesh/chains";
 import { connectDb, type DbHandle } from "@relaymesh/db";
 import { IBridgeProvider, V3SubstrateToEvmProvider, type RouteProvider } from "@relaymesh/routes";
 
@@ -8,9 +9,12 @@ import { IBridgeProvider, V3SubstrateToEvmProvider, type RouteProvider } from "@
 const cache = globalThis as typeof globalThis & {
   __relaymeshDb?: DbHandle;
   __relaymeshApi?: Promise<ApiPromise>;
+  __relaymeshMainnetApi?: Promise<ApiPromise>;
+  __relaymeshBsc?: PublicClient;
 };
 
 export const v3Config = loadPortaldotV3Config();
+export const bridgeConfig = loadPortaldotBridgeConfig();
 
 export function getDb(): DbHandle["db"] {
   if (!cache.__relaymeshDb) {
@@ -30,6 +34,22 @@ export function getSubstrateApi(): Promise<ApiPromise> {
     });
   }
   return cache.__relaymeshApi;
+}
+
+/** Portaldot mainnet, for checking bridge deposits. Connected on first use only. */
+export function getMainnetApi(): Promise<ApiPromise> {
+  if (!cache.__relaymeshMainnetApi) {
+    cache.__relaymeshMainnetApi = connectSubstrate(bridgeConfig.mainnetWsUrl, { autoReconnectMs: 2_500, timeoutMs: SERVER_RPC_TIMEOUT_MS }).catch((error: unknown) => {
+      cache.__relaymeshMainnetApi = undefined;
+      throw error;
+    });
+  }
+  return cache.__relaymeshMainnetApi;
+}
+
+export function getBscClient(): PublicClient {
+  cache.__relaymeshBsc ??= createBscClient(bridgeConfig);
+  return cache.__relaymeshBsc;
 }
 
 export async function getProviders(): Promise<RouteProvider[]> {
