@@ -27,6 +27,11 @@ export function formatTime(unixSeconds: number): string {
   return `${new Date(unixSeconds * 1000).toISOString().slice(11, 19)} UTC`;
 }
 
+/** Date and time in the same fixed UTC format, for events that may be days old. */
+export function formatDateTime(unixSeconds: number): string {
+  return `${new Date(unixSeconds * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
 export type Tone = "neutral" | "accent" | "positive" | "caution" | "critical";
 
 export const STATUS_META: Record<IntentStatus, { label: string; tone: Tone; description: string }> = {

@@ -4,11 +4,22 @@ import { ArrowSquareOut, CircleNotch, FileArrowUp, HourglassMedium, SealCheck, S
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPublicClient, http, type Hex } from "viem";
 import { intentRegistryAbi } from "@relaymesh/contracts/abi/IntentRegistry";
+import { receiptBatchRegistryAbi } from "@relaymesh/contracts/abi/ReceiptBatchRegistry";
 import { isChainId } from "@relaymesh/core";
 import { CopyButton } from "./copy-button";
 import { Badge, Button, inputClass, Mono, Panel } from "./ui";
-import { explorerBlockUrl, formatAmount, shortHash, type Tone } from "@/lib/format";
-import { parseReceipt, ReceiptFormatError, verifyReceipt, type ParsedReceipt, type RegistryReader, type Verdict, type Verification } from "@/lib/verify-receipt";
+import { explorerBlockUrl, formatAmount, formatDateTime, shortHash, type Tone } from "@/lib/format";
+import {
+  parseReceipt,
+  ReceiptFormatError,
+  verifyReceipt,
+  type BatchProofClaim,
+  type BatchReader,
+  type ParsedReceipt,
+  type RegistryReader,
+  type Verdict,
+  type Verification,
+} from "@/lib/verify-receipt";
 
 export interface VerifierExample {
   intentId: string;
@@ -28,7 +39,7 @@ const INTENT_ID = /^0x[0-9a-fA-F]{32}$/;
 const STEP_TEXT: Record<Step, string> = {
   fetching: "Fetching the receipt",
   hashing: "Hashing it in your browser",
-  reading: "Reading IntentRegistry on PortalDot V3",
+  reading: "Reading the registries on PortalDot V3",
 };
 
 const VERDICT: Record<Verdict, { tone: Tone; title: string; body: string; icon: ReactNode }> = {
@@ -44,6 +55,12 @@ const VERDICT: Record<Verdict, { tone: Tone; title: string; body: string; icon: 
     body: "This intent is anchored with a different receipt hash, so this receipt is not the one RelayMesh committed to. Something in it was changed.",
     icon: <SealWarning size={22} weight="fill" />,
   },
+  proof_invalid: {
+    tone: "critical",
+    title: "Batch proof does not check out",
+    body: "RelayMesh supplied a batch proof for this intent, but from this receipt it leads to no root recorded on PortalDot V3. Treat the receipt as unverified.",
+    icon: <SealWarning size={22} weight="fill" />,
+  },
   receipt_pending: {
     tone: "caution",
     title: "Receipt not anchored yet",
@@ -53,7 +70,7 @@ const VERDICT: Record<Verdict, { tone: Tone; title: string; body: string; icon: 
   not_anchored: {
     tone: "neutral",
     title: "Not anchored on chain",
-    body: "IntentRegistry holds nothing for this intent. Receipts are anchored only once a transfer settles.",
+    body: "Neither registry holds anything for this intent. Receipts are anchored once a transfer settles, in batches, so a receipt that settled minutes ago may still be waiting for its batch.",
     icon: <Question size={22} weight="fill" />,
   },
 };
@@ -65,6 +82,23 @@ const VERDICT_RING: Record<Tone, string> = {
   neutral: "border-line bg-raised text-muted",
   accent: "border-accent/30 bg-accent-soft text-accent",
 };
+
+const BATCH_MATCH_BODY =
+  "Your browser computed this receipt’s leaf and folded RelayMesh’s Merkle proof up to a batch root recorded on PortalDot V3. This receipt is exactly what RelayMesh committed to.";
+
+/** RelayMesh's batch proof for an intent. Only its shape is checked here; verifyReceipt checks it against the chain. */
+async function fetchBatchProof(intentId: string): Promise<BatchProofClaim | null> {
+  const response = await fetch(`/api/intents/${intentId}/anchor`, { cache: "no-store" });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error("RelayMesh could not load this receipt’s batch proof right now. Try again in a moment.");
+  const body = (await response.json().catch(() => null)) as { batch?: { receiptHash?: unknown; proof?: unknown } | null } | null;
+  const batch = body?.batch;
+  if (!batch) return null;
+  if (typeof batch.receiptHash !== "string" || !Array.isArray(batch.proof) || !batch.proof.every((p) => typeof p === "string")) {
+    throw new Error("RelayMesh returned a malformed batch proof for this intent.");
+  }
+  return { receiptHash: batch.receiptHash as Hex, proof: batch.proof as Hex[] };
+}
 
 async function fetchReceipt(intentId: string): Promise<string> {
   const response = await fetch(`/api/intents/${intentId}/receipt`, { cache: "no-store" });
@@ -88,12 +122,14 @@ export function ReceiptVerifier({
   rpcUrl,
   explorerUrl,
   registry,
+  batchRegistry,
   initialIntentId,
   examples,
 }: {
   rpcUrl: string;
   explorerUrl: string;
   registry: { address: Hex; fromBlock: string | null } | null;
+  batchRegistry: Hex | null;
   initialIntentId: string | null;
   examples: VerifierExample[];
 }) {
@@ -105,9 +141,10 @@ export function ReceiptVerifier({
   const fileInput = useRef<HTMLInputElement>(null);
   const ran = useRef(false);
 
+  const client = useMemo(() => createPublicClient({ transport: http(rpcUrl) }), [rpcUrl]);
+
   const reader = useMemo<RegistryReader | null>(() => {
     if (!registry) return null;
-    const client = createPublicClient({ transport: http(rpcUrl) });
     const contract = { address: registry.address, abi: intentRegistryAbi } as const;
     const receiptRecorded = intentRegistryAbi.find((item) => item.type === "event" && item.name === "ReceiptRecorded");
     return {
@@ -122,11 +159,31 @@ export function ReceiptVerifier({
         return log?.transactionHash && log.blockNumber !== null ? { txHash: log.transactionHash, blockNumber: log.blockNumber } : null;
       },
     };
-  }, [registry, rpcUrl]);
+  }, [client, registry]);
+
+  const batches = useMemo<BatchReader | null>(() => {
+    if (!batchRegistry) return null;
+    const contract = { address: batchRegistry, abi: receiptBatchRegistryAbi } as const;
+    const batchRecorded = receiptBatchRegistryAbi.find((item) => item.type === "event" && item.name === "BatchRecorded");
+    return {
+      fetchProof: fetchBatchProof,
+      async getBatch(root) {
+        const b = await client.readContract({ ...contract, functionName: "getBatch", args: [root] });
+        return b.recordedAt === 0n ? null : { recordedAt: b.recordedAt, blockNumber: b.blockNumber, leafCount: b.leafCount };
+      },
+      async findBatchTx(root, blockNumber) {
+        // The contract stores the block it recorded the batch in, so the search covers exactly that block.
+        if (batchRecorded?.type !== "event") return null;
+        const logs = await client.getLogs({ address: batchRegistry, event: batchRecorded, args: { root }, fromBlock: blockNumber, toBlock: blockNumber });
+        const log = logs.at(-1);
+        return log?.transactionHash && log.blockNumber !== null ? { txHash: log.transactionHash, blockNumber: log.blockNumber } : null;
+      },
+    };
+  }, [client, batchRegistry]);
 
   const run = useCallback(
     async (source: { intentId: string } | { json: string }) => {
-      if (!reader) return;
+      if (!reader && !batches) return;
       try {
         let text: string;
         if ("intentId" in source) {
@@ -138,7 +195,7 @@ export function ReceiptVerifier({
         setState({ kind: "working", step: "hashing" });
         const receipt = parseReceipt(text);
         setState({ kind: "working", step: "reading" });
-        const result = await verifyReceipt(receipt, reader);
+        const result = await verifyReceipt(receipt, reader, batches);
         setState({ kind: "done", receipt, result });
       } catch (error) {
         const message =
@@ -152,7 +209,7 @@ export function ReceiptVerifier({
         setState({ kind: "error", message });
       }
     },
-    [reader],
+    [reader, batches],
   );
 
   // A link with ?intent= verifies straight away.
@@ -177,10 +234,10 @@ export function ReceiptVerifier({
     setMode("json");
   }
 
-  if (!reader) {
+  if (!reader && !batches) {
     return (
       <Panel index={1}>
-        <p className="text-sm text-muted">This deployment has no IntentRegistry address configured, so there is nothing on chain to check against.</p>
+        <p className="text-sm text-muted">This deployment has no registry address configured, so there is nothing on chain to check against.</p>
       </Panel>
     );
   }
@@ -305,7 +362,9 @@ export function ReceiptVerifier({
             <p className="text-sm text-critical">{state.message}</p>
           </Panel>
         )}
-        {state.kind === "done" && registry && <Result receipt={state.receipt} result={state.result} rpcUrl={rpcUrl} explorerUrl={explorerUrl} registry={registry} />}
+        {state.kind === "done" && (
+          <Result receipt={state.receipt} result={state.result} rpcUrl={rpcUrl} explorerUrl={explorerUrl} registry={registry?.address ?? null} batchRegistry={batchRegistry} />
+        )}
       </div>
     </>
   );
@@ -329,28 +388,51 @@ function HashValue({ value, label }: { value: string; label: string }) {
   );
 }
 
+function ProofSteps({ proof }: { proof: Hex[] }) {
+  if (proof.length === 0) return <span className="text-muted">Empty: the batch holds only this receipt, so its leaf is the root</span>;
+  return (
+    <details className="group">
+      <summary className="press w-fit cursor-pointer list-none rounded-full text-accent hover:underline">
+        {proof.length} sibling {proof.length === 1 ? "hash" : "hashes"}, leaf to root
+      </summary>
+      <ol className="mt-2 grid gap-1.5" aria-label="Sibling hashes, from the leaf up to the root">
+        {proof.map((step, i) => (
+          <li key={`${i}-${step}`}>
+            <HashValue value={step} label={`Copy proof hash ${i + 1}`} />
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 function Result({
   receipt,
   result,
   rpcUrl,
   explorerUrl,
   registry,
+  batchRegistry,
 }: {
   receipt: ParsedReceipt;
   result: Verification;
   rpcUrl: string;
   explorerUrl: string;
-  registry: { address: Hex };
+  registry: Hex | null;
+  batchRegistry: Hex | null;
 }) {
   const verdict = VERDICT[result.verdict];
-  const anchored = result.verdict === "match" || result.verdict === "mismatch";
+  const batch = result.batch;
+  const inBatch = result.anchoredIn === "batch" || result.verdict === "proof_invalid";
+  const body = result.verdict === "match" && result.anchoredIn === "batch" ? BATCH_MATCH_BODY : verdict.body;
+  const contract = inBatch ? batchRegistry : (registry ?? batchRegistry);
   return (
     <section className="enter rounded-[18px] border border-line bg-surface shadow-panel" style={{ "--i": 2 } as React.CSSProperties}>
       <div className={`flex items-start gap-3 rounded-t-[18px] border-b px-5 py-4 sm:px-6 ${VERDICT_RING[verdict.tone]}`}>
         <span className="mt-0.5 shrink-0">{verdict.icon}</span>
         <div className="grid gap-1">
           <h2 className="text-base font-semibold">{verdict.title}</h2>
-          <p className="text-sm text-ink/80">{verdict.body}</p>
+          <p className="text-sm text-ink/80">{body}</p>
         </div>
       </div>
       <dl className="divide-y divide-line px-5 sm:px-6">
@@ -377,9 +459,41 @@ function Result({
         <Row label="Hash in your browser">
           <HashValue value={result.computedHash} label="Copy computed hash" />
         </Row>
-        <Row label="Hash on chain">
-          {anchored ? <HashValue value={result.onChain.receiptHash} label="Copy on-chain hash" /> : <span className="text-muted">Nothing recorded</span>}
-        </Row>
+        {inBatch && batch ? (
+          <>
+            {result.verdict === "mismatch" && result.anchoredHash && (
+              <Row label="Hash in the batch">
+                <HashValue value={result.anchoredHash} label="Copy the batched receipt hash" />
+              </Row>
+            )}
+            <Row label="Leaf in your browser">
+              <span className="grid gap-1">
+                <HashValue value={batch.leaf} label="Copy computed leaf" />
+                {result.verdict !== "match" && <span className="text-[13px] text-critical">With this proof, leads to no root recorded on chain</span>}
+              </span>
+            </Row>
+            <Row label="Merkle proof">
+              <ProofSteps proof={batch.proof} />
+            </Row>
+            <Row label="Batch root on chain">
+              {batch.root && batch.onChain ? (
+                <span className="grid gap-1">
+                  <HashValue value={batch.root} label="Copy batch root" />
+                  <span className="text-[13px] text-muted tabular-nums">
+                    {batch.onChain.leafCount} {batch.onChain.leafCount === 1 ? "receipt" : "receipts"} in this batch · recorded {formatDateTime(Number(batch.onChain.recordedAt))}
+                  </span>
+                  {result.verdict === "mismatch" && <span className="text-[13px] text-muted">Reached from the hash in the batch, not from this receipt</span>}
+                </span>
+              ) : (
+                <span className="text-critical">No recorded root: the proof leads nowhere from this receipt</span>
+              )}
+            </Row>
+          </>
+        ) : (
+          <Row label="Hash on chain">
+            {result.anchoredHash ? <HashValue value={result.anchoredHash} label="Copy on-chain hash" /> : <span className="text-muted">Nothing recorded</span>}
+          </Row>
+        )}
         {result.routeMatches !== null && (
           <Row label="Recorded by">
             <span className="grid gap-1">
@@ -391,7 +505,7 @@ function Result({
           </Row>
         )}
         {result.anchorTx && (
-          <Row label="Anchoring transaction">
+          <Row label={result.anchoredIn === "batch" ? "Batch transaction" : "Anchoring transaction"}>
             <span className="grid gap-1">
               <HashValue value={result.anchorTx.txHash} label="Copy transaction hash" />
               <span className="text-[13px] text-muted">EVM block #{result.anchorTx.blockNumber.toString()}</span>
@@ -400,8 +514,21 @@ function Result({
         )}
       </dl>
       <p className="border-t border-line px-5 py-4 text-[13px] text-muted sm:px-6">
-        Read from <Mono className="text-[12px]">{rpcUrl.replace(/^https?:\/\//, "")}</Mono>, contract <Mono className="text-[12px]">{shortHash(registry.address, 8, 6)}</Mono>. Hash ={" "}
-        <Mono className="text-[12px]">keccak256(&quot;relaymesh.receipt.v1\n&quot; + canonical JSON)</Mono>.
+        Read from <Mono className="text-[12px]">{rpcUrl.replace(/^https?:\/\//, "")}</Mono>
+        {contract && (
+          <>
+            , contract <Mono className="text-[12px]">{shortHash(contract, 8, 6)}</Mono>
+            {inBatch ? " (ReceiptBatchRegistry)" : registry ? " (IntentRegistry)" : ""}
+          </>
+        )}
+        . Hash = <Mono className="text-[12px]">keccak256(&quot;relaymesh.receipt.v1\n&quot; + canonical JSON)</Mono>
+        {inBatch && (
+          <>
+            ; leaf = <Mono className="text-[12px]">keccak256(&quot;relaymesh.batch.leaf.v1\n&quot; + {"{intentHash, receiptHash}"})</Mono>, pairs hashed in sorted order under{" "}
+            <Mono className="text-[12px]">relaymesh.batch.node.v1</Mono>
+          </>
+        )}
+        .
       </p>
     </section>
   );

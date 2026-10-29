@@ -1,0 +1,1062 @@
+{
+  "id": "25e060db-852c-4f79-bdca-22717681a8f7",
+  "prevId": "010f41fd-5361-4972-bb0d-141683a3b768",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.execution_plans": {
+      "name": "execution_plans",
+      "schema": "",
+      "columns": {
+        "plan_id": {
+          "name": "plan_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "intent_id": {
+          "name": "intent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quote_id": {
+          "name": "quote_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "chain": {
+          "name": "chain",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "signer": {
+          "name": "signer",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "call_hex": {
+          "name": "call_hex",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination_account": {
+          "name": "destination_account",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "estimated_fee": {
+          "name": "estimated_fee",
+          "type": "numeric(78, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "submit_before": {
+          "name": "submit_before",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "inserted_at": {
+          "name": "inserted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "execution_plans_intent_id_idx": {
+          "name": "execution_plans_intent_id_idx",
+          "columns": [
+            {
+              "expression": "intent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "execution_plans_quote_fk": {
+          "name": "execution_plans_quote_fk",
+          "tableFrom": "execution_plans",
+          "columnsFrom": [
+            "quote_id",
+            "intent_id"
+          ],
+          "tableTo": "quotes",
+          "columnsTo": [
+            "quote_id",
+            "intent_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "execution_plans_kind_valid": {
+          "name": "execution_plans_kind_valid",
+          "value": "\"execution_plans\".\"kind\" IN ('substrate_call')"
+        },
+        "execution_plans_call_hex": {
+          "name": "execution_plans_call_hex",
+          "value": "\"execution_plans\".\"call_hex\" ~ '^0x([0-9a-f]{2})+$'"
+        },
+        "execution_plans_fee_nonnegative": {
+          "name": "execution_plans_fee_nonnegative",
+          "value": "\"execution_plans\".\"estimated_fee\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.idempotency_records": {
+      "name": "idempotency_records",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "intent_id": {
+          "name": "intent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "inserted_at": {
+          "name": "inserted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "idempotency_records_intent_id_intents_intent_id_fk": {
+          "name": "idempotency_records_intent_id_intents_intent_id_fk",
+          "tableFrom": "idempotency_records",
+          "columnsFrom": [
+            "intent_id"
+          ],
+          "tableTo": "intents",
+          "columnsTo": [
+            "intent_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "idempotency_records_intent_id_unique": {
+          "name": "idempotency_records_intent_id_unique",
+          "columns": [
+            "intent_id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "idempotency_records_request_hash_hex": {
+          "name": "idempotency_records_request_hash_hex",
+          "value": "\"idempotency_records\".\"request_hash\" ~ '^0x[0-9a-f]{64}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.intents": {
+      "name": "intents",
+      "schema": "",
+      "columns": {
+        "intent_id": {
+          "name": "intent_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "intent_hash": {
+          "name": "intent_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "requester": {
+          "name": "requester",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_chain": {
+          "name": "source_chain",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_asset": {
+          "name": "source_asset",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_amount": {
+          "name": "source_amount",
+          "type": "numeric(78, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination_chain": {
+          "name": "destination_chain",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "destination_asset": {
+          "name": "destination_asset",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "recipient": {
+          "name": "recipient",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "min_output": {
+          "name": "min_output",
+          "type": "numeric(78, 0)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_fee": {
+          "name": "max_fee",
+          "type": "numeric(78, 0)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "deadline": {
+          "name": "deadline",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "current_status": {
+          "name": "current_status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "selected_quote_id": {
+          "name": "selected_quote_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inserted_at": {
+          "name": "inserted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "intents_current_status_idx": {
+          "name": "intents_current_status_idx",
+          "columns": [
+            {
+              "expression": "current_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "intents_selected_quote_fk": {
+          "name": "intents_selected_quote_fk",
+          "tableFrom": "intents",
+          "columnsFrom": [
+            "selected_quote_id",
+            "intent_id"
+          ],
+          "tableTo": "quotes",
+          "columnsTo": [
+            "quote_id",
+            "intent_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "intents_intent_hash_unique": {
+          "name": "intents_intent_hash_unique",
+          "columns": [
+            "intent_hash"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "intents_intent_id_hex": {
+          "name": "intents_intent_id_hex",
+          "value": "\"intents\".\"intent_id\" ~ '^0x[0-9a-f]{32}$'"
+        },
+        "intents_intent_hash_hex": {
+          "name": "intents_intent_hash_hex",
+          "value": "\"intents\".\"intent_hash\" ~ '^0x[0-9a-f]{64}$'"
+        },
+        "intents_source_amount_positive": {
+          "name": "intents_source_amount_positive",
+          "value": "\"intents\".\"source_amount\" > 0"
+        },
+        "intents_min_output_nonnegative": {
+          "name": "intents_min_output_nonnegative",
+          "value": "\"intents\".\"min_output\" IS NULL OR \"intents\".\"min_output\" >= 0"
+        },
+        "intents_max_fee_nonnegative": {
+          "name": "intents_max_fee_nonnegative",
+          "value": "\"intents\".\"max_fee\" IS NULL OR \"intents\".\"max_fee\" >= 0"
+        },
+        "intents_deadline_after_creation": {
+          "name": "intents_deadline_after_creation",
+          "value": "\"intents\".\"deadline\" > \"intents\".\"created_at\""
+        },
+        "intents_current_status_valid": {
+          "name": "intents_current_status_valid",
+          "value": "\"intents\".\"current_status\" IN ('DRAFT', 'QUOTED', 'AWAITING_SIGNATURE', 'SOURCE_SUBMITTED', 'SOURCE_CONFIRMED', 'DESTINATION_PENDING', 'SETTLED', 'EXPIRED', 'FAILED_BEFORE_SOURCE', 'NEEDS_REVIEW')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.quotes": {
+      "name": "quotes",
+      "schema": "",
+      "columns": {
+        "quote_id": {
+          "name": "quote_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "intent_id": {
+          "name": "intent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider": {
+          "name": "provider",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "route_id": {
+          "name": "route_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expected_output": {
+          "name": "expected_output",
+          "type": "numeric(78, 0)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fees": {
+          "name": "fees",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "retrieved_at": {
+          "name": "retrieved_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "estimated_seconds": {
+          "name": "estimated_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inserted_at": {
+          "name": "inserted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "quotes_intent_id_idx": {
+          "name": "quotes_intent_id_idx",
+          "columns": [
+            {
+              "expression": "intent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "quotes_intent_id_intents_intent_id_fk": {
+          "name": "quotes_intent_id_intents_intent_id_fk",
+          "tableFrom": "quotes",
+          "columnsFrom": [
+            "intent_id"
+          ],
+          "tableTo": "intents",
+          "columnsTo": [
+            "intent_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "quotes_quote_id_intent_id_key": {
+          "name": "quotes_quote_id_intent_id_key",
+          "columns": [
+            "quote_id",
+            "intent_id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "quotes_expected_output_nonnegative": {
+          "name": "quotes_expected_output_nonnegative",
+          "value": "\"quotes\".\"expected_output\" >= 0"
+        },
+        "quotes_expiry_after_retrieval": {
+          "name": "quotes_expiry_after_retrieval",
+          "value": "\"quotes\".\"expires_at\" > \"quotes\".\"retrieved_at\""
+        },
+        "quotes_fees_array": {
+          "name": "quotes_fees_array",
+          "value": "jsonb_typeof(\"quotes\".\"fees\") = 'array'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.receipt_batch_anchors": {
+      "name": "receipt_batch_anchors",
+      "schema": "",
+      "columns": {
+        "contract_address": {
+          "name": "contract_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "root": {
+          "name": "root",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tx_hash": {
+          "name": "tx_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "block_number": {
+          "name": "block_number",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "inserted_at": {
+          "name": "inserted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "receipt_batch_anchors_batch_fk": {
+          "name": "receipt_batch_anchors_batch_fk",
+          "tableFrom": "receipt_batch_anchors",
+          "columnsFrom": [
+            "contract_address",
+            "root"
+          ],
+          "tableTo": "receipt_batches",
+          "columnsTo": [
+            "contract_address",
+            "root"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "receipt_batch_anchors_pkey": {
+          "name": "receipt_batch_anchors_pkey",
+          "columns": [
+            "contract_address",
+            "root"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "receipt_batch_anchors_tx_hash_hex": {
+          "name": "receipt_batch_anchors_tx_hash_hex",
+          "value": "\"receipt_batch_anchors\".\"tx_hash\" ~ '^0x[0-9a-f]{64}$'"
+        },
+        "receipt_batch_anchors_block_nonnegative": {
+          "name": "receipt_batch_anchors_block_nonnegative",
+          "value": "\"receipt_batch_anchors\".\"block_number\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.receipt_batch_leaves": {
+      "name": "receipt_batch_leaves",
+      "schema": "",
+      "columns": {
+        "contract_address": {
+          "name": "contract_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "batch_root": {
+          "name": "batch_root",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "intent_id": {
+          "name": "intent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "intent_hash": {
+          "name": "intent_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "receipt_hash": {
+          "name": "receipt_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "leaf_hash": {
+          "name": "leaf_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "proof": {
+          "name": "proof",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "inserted_at": {
+          "name": "inserted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "receipt_batch_leaves_intent_id_idx": {
+          "name": "receipt_batch_leaves_intent_id_idx",
+          "columns": [
+            {
+              "expression": "intent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "receipt_batch_leaves_intent_id_intents_intent_id_fk": {
+          "name": "receipt_batch_leaves_intent_id_intents_intent_id_fk",
+          "tableFrom": "receipt_batch_leaves",
+          "columnsFrom": [
+            "intent_id"
+          ],
+          "tableTo": "intents",
+          "columnsTo": [
+            "intent_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "receipt_batch_leaves_batch_fk": {
+          "name": "receipt_batch_leaves_batch_fk",
+          "tableFrom": "receipt_batch_leaves",
+          "columnsFrom": [
+            "contract_address",
+            "batch_root"
+          ],
+          "tableTo": "receipt_batches",
+          "columnsTo": [
+            "contract_address",
+            "root"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "receipt_batch_leaves_pkey": {
+          "name": "receipt_batch_leaves_pkey",
+          "columns": [
+            "contract_address",
+            "intent_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {
+        "receipt_batch_leaves_leaf_key": {
+          "name": "receipt_batch_leaves_leaf_key",
+          "columns": [
+            "contract_address",
+            "batch_root",
+            "leaf_hash"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "receipt_batch_leaves_intent_hash_hex": {
+          "name": "receipt_batch_leaves_intent_hash_hex",
+          "value": "\"receipt_batch_leaves\".\"intent_hash\" ~ '^0x[0-9a-f]{64}$'"
+        },
+        "receipt_batch_leaves_receipt_hash_hex": {
+          "name": "receipt_batch_leaves_receipt_hash_hex",
+          "value": "\"receipt_batch_leaves\".\"receipt_hash\" ~ '^0x[0-9a-f]{64}$'"
+        },
+        "receipt_batch_leaves_leaf_hash_hex": {
+          "name": "receipt_batch_leaves_leaf_hash_hex",
+          "value": "\"receipt_batch_leaves\".\"leaf_hash\" ~ '^0x[0-9a-f]{64}$'"
+        },
+        "receipt_batch_leaves_proof_array": {
+          "name": "receipt_batch_leaves_proof_array",
+          "value": "jsonb_typeof(\"receipt_batch_leaves\".\"proof\") = 'array'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.receipt_batches": {
+      "name": "receipt_batches",
+      "schema": "",
+      "columns": {
+        "contract_address": {
+          "name": "contract_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "chain_id": {
+          "name": "chain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "root": {
+          "name": "root",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "leaf_count": {
+          "name": "leaf_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "inserted_at": {
+          "name": "inserted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "receipt_batches_pkey": {
+          "name": "receipt_batches_pkey",
+          "columns": [
+            "contract_address",
+            "root"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "receipt_batches_root_hex": {
+          "name": "receipt_batches_root_hex",
+          "value": "\"receipt_batches\".\"root\" ~ '^0x[0-9a-f]{64}$'"
+        },
+        "receipt_batches_contract_hex": {
+          "name": "receipt_batches_contract_hex",
+          "value": "\"receipt_batches\".\"contract_address\" ~ '^0x[0-9a-f]{40}$'"
+        },
+        "receipt_batches_leaf_count_positive": {
+          "name": "receipt_batches_leaf_count_positive",
+          "value": "\"receipt_batches\".\"leaf_count\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.registry_anchors": {
+      "name": "registry_anchors",
+      "schema": "",
+      "columns": {
+        "intent_id": {
+          "name": "intent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "step": {
+          "name": "step",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value_hash": {
+          "name": "value_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "contract_address": {
+          "name": "contract_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "chain_id": {
+          "name": "chain_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tx_hash": {
+          "name": "tx_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "block_number": {
+          "name": "block_number",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "inserted_at": {
+          "name": "inserted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "registry_anchors_intent_id_intents_intent_id_fk": {
+          "name": "registry_anchors_intent_id_intents_intent_id_fk",
+          "tableFrom": "registry_anchors",
+          "columnsFrom": [
+            "intent_id"
+          ],
+          "tableTo": "intents",
+          "columnsTo": [
+            "intent_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "registry_anchors_pkey": {
+          "name": "registry_anchors_pkey",
+          "columns": [
+            "intent_id",
+            "step"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "registry_anchors_step_valid": {
+          "name": "registry_anchors_step_valid",
+          "value": "\"registry_anchors\".\"step\" IN ('intent', 'receipt')"
+        },
+        "registry_anchors_value_hash_hex": {
+          "name": "registry_anchors_value_hash_hex",
+          "value": "\"registry_anchors\".\"value_hash\" ~ '^0x[0-9a-f]{64}$'"
+        },
+        "registry_anchors_tx_hash_hex": {
+          "name": "registry_anchors_tx_hash_hex",
+          "value": "\"registry_anchors\".\"tx_hash\" ~ '^0x[0-9a-f]{64}$'"
+        },
+        "registry_anchors_contract_hex": {
+          "name": "registry_anchors_contract_hex",
+          "value": "\"registry_anchors\".\"contract_address\" ~ '^0x[0-9a-f]{40}$'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.status_events": {
+      "name": "status_events",
+      "schema": "",
+      "columns": {
+        "intent_id": {
+          "name": "intent_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "at": {
+          "name": "at",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "evidence": {
+          "name": "evidence",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "verification_mode": {
+          "name": "verification_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "inserted_at": {
+          "name": "inserted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "status_events_intent_id_intents_intent_id_fk": {
+          "name": "status_events_intent_id_intents_intent_id_fk",
+          "tableFrom": "status_events",
+          "columnsFrom": [
+            "intent_id"
+          ],
+          "tableTo": "intents",
+          "columnsTo": [
+            "intent_id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "status_events_pkey": {
+          "name": "status_events_pkey",
+          "columns": [
+            "intent_id",
+            "seq"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "status_events_seq_nonnegative": {
+          "name": "status_events_seq_nonnegative",
+          "value": "\"status_events\".\"seq\" >= 0"
+        },
+        "status_events_status_valid": {
+          "name": "status_events_status_valid",
+          "value": "\"status_events\".\"status\" IN ('DRAFT', 'QUOTED', 'AWAITING_SIGNATURE', 'SOURCE_SUBMITTED', 'SOURCE_CONFIRMED', 'DESTINATION_PENDING', 'SETTLED', 'EXPIRED', 'FAILED_BEFORE_SOURCE', 'NEEDS_REVIEW')"
+        },
+        "status_events_reason_present": {
+          "name": "status_events_reason_present",
+          "value": "length(btrim(\"status_events\".\"reason\")) > 0"
+        },
+        "status_events_verification_mode_valid": {
+          "name": "status_events_verification_mode_valid",
+          "value": "\"status_events\".\"verification_mode\" IS NULL OR \"status_events\".\"verification_mode\" IN ('destination_rpc_state', 'provider_status_plus_destination_rpc', 'provider_report_only')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.watcher_cursors": {
+      "name": "watcher_cursors",
+      "schema": "",
+      "columns": {
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "block_number": {
+          "name": "block_number",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "watcher_cursors_block_nonnegative": {
+          "name": "watcher_cursors_block_nonnegative",
+          "value": "\"watcher_cursors\".\"block_number\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "views": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

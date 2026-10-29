@@ -21,13 +21,14 @@ flowchart TB
     end
 
     subgraph Data[Storage]
-        PG[(Postgres<br/>intents, quotes, plans,<br/>status events, anchors)]
+        PG[(Postgres<br/>intents, quotes, plans,<br/>status events, anchors,<br/>receipt batches)]
     end
 
     subgraph V3[PortalDot V3 testnet]
         Sub[Substrate RPC<br/>wss://test-node-v3.portaldot.dev]
         EVM[EVM JSON-RPC, chain 420420777<br/>https://test-evm-rpc-v3.portaldot.dev]
-        Reg[IntentRegistry contract<br/>0xfcfc36e3ea951640d1e495a1e671d66c75eb5123]
+        Reg[IntentRegistry contract<br/>0xfcfc36e3ea951640d1e495a1e671d66c75eb5123<br/>per-intent anchors, before batching]
+        Batch[ReceiptBatchRegistry contract<br/>0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e<br/>one Merkle root per batch]
     end
 
     UI -->|create intent, quote,<br/>select route, report inclusion| API
@@ -41,7 +42,9 @@ flowchart TB
     Worker --> PG
     Worker -->|scan finalized blocks,<br/>confirm finality| Sub
     Worker -->|eth_getBalance at block N-1 and N| EVM
-    Worker -->|recordIntent, recordReceipt| Reg
+    Worker -->|recordBatch| Batch
+    UI -->|getIntent| Reg
+    UI -->|getBatch| Batch
 ```
 
 ## Intent lifecycle
@@ -101,7 +104,9 @@ sequenceDiagram
     K->>DB: SOURCE_CONFIRMED, DESTINATION_PENDING
     K->>E: eth_getBalance(recipient, N-1) and (recipient, N)
     K->>DB: SETTLED or NEEDS_REVIEW, with the measurement
-    K-->>E: Anchor intent and receipt hashes in IntentRegistry
+    K->>DB: Plan a batch of waiting receipts: root, leaves, proofs
+    K-->>E: recordBatch(root, leafCount) in ReceiptBatchRegistry
+    K->>DB: Batch transaction, once mined
 ```
 
 If the browser never reports the transaction, the watcher still finds it: it scans finalized blocks for extrinsics whose call bytes equal a stored plan, signed by the requester, in a block no older than the plan.
@@ -114,9 +119,9 @@ If the browser never reports the transaction, the watcher still finds it: it sca
 | `packages/chains` | V3 Substrate and EVM clients, Revive address mapping, extrinsic verification, the watcher's chain reader. |
 | `packages/routes` | `RouteProvider` interface, the Substrate-to-EVM provider, the iBridge slot (always unavailable), quote ranking. |
 | `packages/db` | Drizzle schema and migrations, append-only triggers, store functions that apply core rules in locked transactions. |
-| `contracts` | `IntentRegistry` Solidity contract, compile, simulated deploy and deploy scripts, generated typed ABI. |
+| `contracts` | `IntentRegistry` and `ReceiptBatchRegistry` Solidity contracts, compile, simulated deploy, on-chain behaviour checks and deploy scripts, generated typed ABIs. |
 | `apps/web` | Next.js pages and API routes. |
-| `apps/worker` | Watcher loop: scan, confirm, measure, expire, anchor. |
+| `apps/worker` | Watcher loop: scan, confirm, measure, expire, batch-anchor. |
 
 ## Storage
 
@@ -127,7 +132,10 @@ If the browser never reports the transaction, the watcher still finds it: it sca
 | `quotes` | Append-only (trigger) | Every quote ever shown |
 | `execution_plans` | Append-only (trigger) | The exact call bytes handed to the wallet |
 | `idempotency_records` | Append-only (trigger) | Request hash per idempotency key |
-| `registry_anchors` | Append-only (trigger) | IntentRegistry writes, inserted only after mining |
+| `registry_anchors` | Append-only (trigger) | IntentRegistry writes from before batching, inserted only after mining |
+| `receipt_batches` | Append-only (trigger) | A planned batch: contract, Merkle root, leaf count; written before the root is sent |
+| `receipt_batch_leaves` | Append-only (trigger) | Each intent's leaf, receipt hash and proof; one batch per intent per contract |
+| `receipt_batch_anchors` | Append-only (trigger) | A batch's mined `recordBatch` transaction |
 | `watcher_cursors` | Forward-only | Last finalized block scanned |
 
 ## Trust boundaries
@@ -138,8 +146,31 @@ If the browser never reports the transaction, the watcher still finds it: it sca
   Settlement comes from RelayMesh's own `eth_getBalance` reads at a finalized block.
 - The database is not trusted blindly.
   Each load recomputes the intent hash and replays the full status history.
-- `IntentRegistry` is an audit anchor only.
-  It proves which hashes the relayer committed to, not that a transfer happened.
+- `IntentRegistry` and `ReceiptBatchRegistry` are audit anchors only.
+  They prove which hashes the relayer committed to, not that a transfer happened.
+- RelayMesh's batch proofs are not trusted.
+  The receipt checker recomputes the leaf from the receipt in hand and accepts it only if the proof folds to a root the contract has recorded.
+
+## Batch anchoring
+
+Settled receipts are anchored in batches: one `ReceiptBatchRegistry.recordBatch(root, leafCount)` covers many intents.
+
+| Part | Choice |
+| --- | --- |
+| Leaf | `hashCanonical("relaymesh.batch.leaf.v1", { intentHash, receiptHash })`, the receipts' own canonical-JSON hashing |
+| Node | `hashCanonical("relaymesh.batch.node.v1", [a, b])` with `a <= b` (sorted pairs), so a proof is only sibling hashes |
+| Leaf order | Sorted ascending and unique, so the root depends only on the set of leaves |
+| Odd node | Carried up unchanged, never duplicated |
+| When | `ANCHOR_BATCH_SIZE` receipts waiting (20), or the oldest settled `ANCHOR_BATCH_MAX_WAIT_MINUTES` ago (30), at most `ANCHOR_BATCH_MAX_LEAVES` per batch (256) |
+| Cost | About 3.9 tPOT per batch on V3 (simulated), against about 23 tPOT per intent before |
+
+Recovery follows the same rule as before batching: read the chain, then record.
+A batch is stored with all its leaves and proofs before its root is sent.
+On the next pass, an unconfirmed batch's root is read back with `getBatch`; if it is recorded, its `BatchRecorded` event is looked up in exactly the block the contract stored, and otherwise the same root is sent again.
+Receipts that settle in the meantime go to the next batch, so a crash never changes a root after it may have been mined.
+
+The contract stores one slot per batch (recorded time, block number, leaf count) and fixes its recorder at deployment.
+`IntentRegistry` is no longer written; the receipts anchored there are never re-batched, and the receipt checker reads it first, so they verify exactly as before.
 
 ## Known limits
 
@@ -148,5 +179,7 @@ If the browser never reports the transaction, the watcher still finds it: it sca
 - The V3 node keeps historical state for recent blocks only.
   If the watcher is down for more than about 25 minutes after a transfer, the balance delta can no longer be measured and the intent is flagged for review.
 - Two signed transfers have settled end to end so far (blocks #122911 and #136917, see [evidence.md](evidence.md)); broader testing is still to come.
-- `IntentRegistry` is deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` with a single recorder, the RelayMesh relayer key.
-  Anchoring stops if that key runs out of tPOT; settlement does not depend on it.
+- `IntentRegistry` is deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` with a single recorder, the RelayMesh relayer key, and holds the four receipts anchored before batching.
+- `ReceiptBatchRegistry` is deployed at `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` (block #238209) with the same recorder.
+  A watcher without `RECEIPT_BATCH_REGISTRY_ADDRESS` settles transfers with anchoring off.
+  Anchoring pauses if the relayer runs out of tPOT; settlement does not depend on it.

@@ -5,6 +5,7 @@ export * from "./chains";
 export * from "./errors";
 export * from "./idempotency";
 export * from "./intent";
+export * from "./merkle";
 export * from "./quote";
 export * from "./receipt";
 export * from "./settlement";

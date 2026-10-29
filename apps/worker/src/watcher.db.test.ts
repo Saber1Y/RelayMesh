@@ -2,20 +2,23 @@ import { sql } from "drizzle-orm";
 import type { Hex } from "viem";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { BlockExtrinsic, BlockRef, EvmBalanceRead, ExtrinsicCheck, ExtrinsicVerification, V3ChainReader } from "@relaymesh/chains";
-import { createIntent, hashRequest, type IntentStatus, type Quote } from "@relaymesh/core";
+import { batchLeaf, buildReceipt, createIntent, hashReceipt, hashRequest, verifyMerkleProof, type IntentStatus, type Quote } from "@relaymesh/core";
 import {
   advanceCursor,
   appendStatusEvent,
   connectDb,
   getCursor,
+  getReceiptBatchProof,
   insertIntent,
-  listAnchors,
+  listQuotes,
+  listUnconfirmedReceiptBatches,
   loadIntent,
+  recordAnchor,
   recordQuotes,
   selectQuote,
 } from "@relaymesh/db";
 import type { Logger } from "./log";
-import { RelayerFundsError, ZERO_ADDRESS, ZERO_HASH, type MinedTx, type RegistryClient, type RegistryState } from "./registry";
+import { RelayerFundsError, type BatchRegistryClient, type BatchState, type MinedTx } from "./registry";
 import { runPass, SOURCE_SCAN_CURSOR, type WatcherContext } from "./watcher";
 
 // Test doubles: an in-memory V3 chain and registry. They model only what the watcher reads, so the
@@ -102,46 +105,49 @@ class FakeChain implements V3ChainReader {
   }
 }
 
-class FakeRegistry implements RegistryClient {
+class FakeBatchRegistry implements BatchRegistryClient {
   address = "0x00000000000000000000000000000000000000aa" as Hex;
   chainId = 420420777;
   recorder = "0x00000000000000000000000000000000000000bb" as Hex;
-  state = new Map<Hex, RegistryState>();
-  writes: string[] = [];
-  events = new Map<string, MinedTx>();
+  batches = new Map<Hex, BatchState & MinedTx>();
+  /** Roots of every mined recordBatch, in order. */
+  writes: Hex[] = [];
   /** When set, every write fails the way an unfunded relayer's does; `refused` counts those attempts. */
   shortOfFunds = false;
   refused = 0;
+  /** "after_mining": the next write is mined, then the worker dies before recording it. "before_sending": it dies first. */
+  crash: "after_mining" | "before_sending" | null = null;
   private block = 500n;
 
-  async read(intentHash: Hex) {
-    return this.state.get(intentHash) ?? { recorder: ZERO_ADDRESS, routeId: ZERO_HASH, receiptHash: ZERO_HASH };
+  async contractRecorder() {
+    return this.recorder;
   }
-  async recordIntent(intentHash: Hex, routeId: Hex) {
-    this.payOrRefuse();
-    this.writes.push(`intent:${intentHash}`);
-    this.state.set(intentHash, { recorder: this.recorder, routeId, receiptHash: ZERO_HASH });
-    return this.mine(`IntentRecorded:${intentHash}`);
+  async getBatch(root: Hex) {
+    const b = this.batches.get(root);
+    return b ? { recordedAt: b.recordedAt, blockNumber: b.blockNumber, leafCount: b.leafCount } : null;
   }
-  async recordReceipt(intentHash: Hex, receiptHash: Hex) {
-    this.payOrRefuse();
-    this.writes.push(`receipt:${intentHash}`);
-    const s = await this.read(intentHash);
-    this.state.set(intentHash, { ...s, receiptHash });
-    return this.mine(`ReceiptRecorded:${intentHash}`);
-  }
-  async findEvent(kind: string, intentHash: Hex) {
-    return this.events.get(`${kind}:${intentHash}`) ?? null;
-  }
-  private payOrRefuse(): void {
-    if (!this.shortOfFunds) return;
-    this.refused++;
-    throw new RelayerFundsError(this.recorder, 5_597_805_812_053_544_000n, 14_429_019_804_005_092_500n);
-  }
-  private mine(key: string): MinedTx {
+  async recordBatch(root: Hex, leafCount: number) {
+    if (this.crash === "before_sending") {
+      this.crash = null;
+      throw new Error("worker stopped before sending");
+    }
+    if (this.shortOfFunds) {
+      this.refused++;
+      throw new RelayerFundsError(this.recorder, 1_597_805_812_053_544_000n, 4_892_650_567_171_883_400n);
+    }
+    if (this.batches.has(root)) throw new Error(`BatchAlreadyRecorded(${root})`);
     const tx = { txHash: hash32(++this.block, "cc"), blockNumber: this.block };
-    this.events.set(key, tx);
+    this.batches.set(root, { ...tx, recordedAt: BigInt(clock), leafCount });
+    this.writes.push(root);
+    if (this.crash === "after_mining") {
+      this.crash = null;
+      throw new Error("worker stopped after the transaction was mined");
+    }
     return tx;
+  }
+  async findBatchEvent(root: Hex, blockNumber: bigint) {
+    const b = this.batches.get(root);
+    return b && b.blockNumber === blockNumber ? { txHash: b.txHash, blockNumber: b.blockNumber } : null;
   }
 }
 
@@ -151,7 +157,8 @@ const { db, close } = connectDb(process.env.TEST_DATABASE_URL as string, { max: 
 afterAll(() => close());
 
 let chain: FakeChain;
-let registry: FakeRegistry | null;
+let registry: FakeBatchRegistry | null;
+let batching: WatcherContext["config"]["batching"];
 let clock: number;
 let callCounter = 0;
 
@@ -162,14 +169,16 @@ function ctx(): WatcherContext {
     registry,
     log: silent,
     now: () => clock,
-    config: { scanBackfillBlocks: 10, maxBlocksPerPass: 50, signedTxLifetimeSeconds: 1_800, rpcRetryDelayMs: 0 },
+    config: { scanBackfillBlocks: 10, maxBlocksPerPass: 50, signedTxLifetimeSeconds: 1_800, rpcRetryDelayMs: 0, batching },
   };
 }
 
 beforeEach(async () => {
-  await db.execute(sql`TRUNCATE watcher_cursors, registry_anchors, execution_plans, status_events, idempotency_records, quotes, intents`);
+  await db.execute(sql`TRUNCATE receipt_batch_anchors, receipt_batch_leaves, receipt_batches, watcher_cursors, registry_anchors, execution_plans, status_events, idempotency_records, quotes, intents`);
   chain = new FakeChain();
-  registry = new FakeRegistry();
+  registry = new FakeBatchRegistry();
+  // Anchor every receipt as it settles unless a test is about batching.
+  batching = { size: 1, maxWaitSeconds: 1_800, maxLeaves: 256 };
   clock = NOW + 30; // after the reported submission at NOW + 5, as in real use
 });
 
@@ -270,13 +279,12 @@ describe("source confirmation and destination measurement", () => {
       details: { balanceBefore: "5", balanceAfter: (5n + EXPECTED).toString() },
     });
 
-    const anchors = await listAnchors(db, intent.intentId);
-    expect(anchors.map((a) => a.step)).toEqual(["intent", "receipt"]);
-    expect(registry?.writes).toHaveLength(2);
+    expect(await getReceiptBatchProof(db, intent.intentId, (registry as FakeBatchRegistry).address)).toMatchObject({ leafCount: 1, proof: [] });
+    expect(registry?.writes).toHaveLength(1);
 
     // Idempotent: nothing more happens on the next pass.
     expect(await runPass(ctx())).toMatchObject({ confirmed: 0, settled: 0, anchored: 0, errors: 0 });
-    expect(registry?.writes).toHaveLength(2);
+    expect(registry?.writes).toHaveLength(1);
   });
 
   it("waits while the inclusion block is not finalized", async () => {
@@ -524,59 +532,162 @@ describe("expiry", () => {
   });
 });
 
-describe("registry anchoring", () => {
-  async function settledIntent() {
+describe("batch anchoring", () => {
+  /** Settles an intent through the real watcher pass, in block n (distinct n for each, two apart). */
+  async function settledIntent(n = 95n) {
     const created = await awaitingIntent();
-    await includeAndReport(created.intent.intentId, created.callHex, 95n);
-    chain.setDelta(RECIPIENT, 95n, 0n, EXPECTED);
+    await includeAndReport(created.intent.intentId, created.callHex, n);
+    chain.setDelta(RECIPIENT, n, 0n, EXPECTED);
+    expect(await runPass(ctx())).toMatchObject({ settled: 1 });
     return created;
   }
+
+  async function receiptHashOf(intentId: Hex): Promise<Hex> {
+    const stored = await loadIntent(db, intentId);
+    const quote = (await listQuotes(db, intentId)).find((q) => q.quoteId === stored?.selectedQuoteId);
+    if (!stored || !quote) throw new Error("not settled");
+    return hashReceipt(buildReceipt({ intent: stored.intent, intentHash: stored.intentHash, quote, history: stored.history }));
+  }
+
+  const fake = () => registry as FakeBatchRegistry;
+  const proofOf = (intentId: Hex) => getReceiptBatchProof(db, intentId, new FakeBatchRegistry().address);
 
   it("is skipped when the registry is not configured", async () => {
     registry = null;
     const { intent } = await settledIntent();
-    expect(await runPass(ctx())).toMatchObject({ settled: 1, anchored: 0, errors: 0 });
-    expect(await listAnchors(db, intent.intentId)).toEqual([]);
+    expect(await proofOf(intent.intentId)).toBeNull();
+    expect(await listUnconfirmedReceiptBatches(db, new FakeBatchRegistry().address)).toEqual([]);
   });
 
-  it("recovers an intent write that was mined before a crash", async () => {
-    const { intent, intentHash } = await settledIntent();
-    const fake = registry as FakeRegistry;
-    await fake.recordIntent(intentHash, ZERO_HASH); // mined earlier, but never recorded in the database
-    fake.writes = [];
-    await runPass(ctx());
-    expect(fake.writes).toEqual([`receipt:${intentHash}`]);
-    expect((await listAnchors(db, intent.intentId)).map((a) => a.step)).toEqual(["intent", "receipt"]);
+  it("waits for a full batch, then anchors every receipt with one write and a proof each", async () => {
+    batching = { size: 3, maxWaitSeconds: 1_800, maxLeaves: 256 };
+    const a = await settledIntent(91n);
+    const b = await settledIntent(93n);
+    expect(fake().writes).toEqual([]);
+    expect(await proofOf(a.intent.intentId)).toBeNull();
+
+    const c = await settledIntent(95n); // the third waiting receipt fills the batch in the same pass
+    expect(fake().writes).toHaveLength(1);
+    const root = fake().writes[0] as Hex;
+    for (const { intent, intentHash } of [a, b, c]) {
+      const proof = await proofOf(intent.intentId);
+      const leaf = batchLeaf(intentHash, await receiptHashOf(intent.intentId));
+      expect(proof).toMatchObject({ root, leafCount: 3, leafHash: leaf, txHash: fake().batches.get(root)?.txHash });
+      expect(verifyMerkleProof(leaf, proof?.proof ?? [], root)).toBe(true);
+    }
+    expect(await runPass(ctx())).toMatchObject({ anchored: 0, errors: 0 });
+    expect(fake().writes).toHaveLength(1);
+  });
+
+  it("writes a smaller batch once the oldest receipt has waited the maximum time", async () => {
+    batching = { size: 10, maxWaitSeconds: 600, maxLeaves: 256 };
+    const { intent } = await settledIntent();
+    const settledAt = (await loadIntent(db, intent.intentId))?.history.at(-1)?.at ?? 0;
+
+    clock = settledAt + 599;
+    expect(await runPass(ctx())).toMatchObject({ anchored: 0, errors: 0 });
+    expect(fake().writes).toEqual([]);
+
+    clock = settledAt + 600;
+    expect(await runPass(ctx())).toMatchObject({ anchored: 1, errors: 0 });
+    expect(await proofOf(intent.intentId)).toMatchObject({ leafCount: 1 });
+  });
+
+  it("caps a batch at the maximum size and leaves the rest for the next one", async () => {
+    const configured = fake();
+    registry = null; // let all three settle before anchoring starts
+    const settled = [await settledIntent(91n), await settledIntent(93n), await settledIntent(95n)];
+    registry = configured;
+    batching = { size: 2, maxWaitSeconds: 1_800, maxLeaves: 2 };
+    expect(await runPass(ctx())).toMatchObject({ anchored: 2, errors: 0 });
+    const proofs = await Promise.all(settled.map((s) => proofOf(s.intent.intentId)));
+    // Oldest settled first: the third waits for the next batch.
+    expect(proofs.map((p) => p?.leafCount ?? null)).toEqual([2, 2, null]);
+
+    clock += 1_800;
+    expect(await runPass(ctx())).toMatchObject({ anchored: 1, errors: 0 });
+    expect(fake().writes).toHaveLength(2);
+    expect((await proofOf(settled[2]?.intent.intentId as Hex))?.root).toBe(fake().writes[1]);
+  });
+
+  it("recovers a batch that was mined before a crash without writing it again", async () => {
+    fake().crash = "after_mining";
+    const { intent } = await settledIntent();
+    expect(fake().writes).toHaveLength(1);
+    expect(await proofOf(intent.intentId)).toBeNull(); // mined, but the worker died before recording it
+
+    expect(await runPass(ctx())).toMatchObject({ anchored: 1, errors: 0 });
+    expect(fake().writes).toHaveLength(1);
+    const root = fake().writes[0] as Hex;
+    expect(await proofOf(intent.intentId)).toMatchObject({ root, txHash: fake().batches.get(root)?.txHash });
+  });
+
+  it("sends a batch planned before a crash with its original leaves, even after more receipts settle", async () => {
+    fake().crash = "before_sending";
+    const first = await settledIntent(93n);
+    expect(await listUnconfirmedReceiptBatches(db, fake().address)).toHaveLength(1);
+    expect(fake().writes).toEqual([]);
+
+    // Another receipt settles before the worker comes back; it must not change the planned root.
+    const second = await settledIntent(95n);
+    const planned = await proofOf(first.intent.intentId);
+    expect(planned).toMatchObject({ leafCount: 1 });
+    expect(await proofOf(second.intent.intentId)).toMatchObject({ leafCount: 1 });
+    expect(fake().writes).toEqual([planned?.root, (await proofOf(second.intent.intentId))?.root]);
+    expect(await listUnconfirmedReceiptBatches(db, fake().address)).toEqual([]);
+  });
+
+  it("refuses to adopt an on-chain batch that disagrees with the stored plan", async () => {
+    fake().crash = "before_sending";
+    const { intent } = await settledIntent();
+    const [planned] = await listUnconfirmedReceiptBatches(db, fake().address);
+    fake().batches.set(planned?.root as Hex, { txHash: hash32(1n, "cc"), blockNumber: 501n, recordedAt: BigInt(clock), leafCount: 7 });
+    expect(await runPass(ctx())).toMatchObject({ anchored: 0, errors: 1 });
+    expect(await proofOf(intent.intentId)).toBeNull();
+  });
+
+  it("never re-anchors a receipt already anchored in IntentRegistry", async () => {
+    batching = { size: 2, maxWaitSeconds: 1_800, maxLeaves: 256 };
+    const legacy = await settledIntent(93n);
+    await recordAnchor(db, {
+      intentId: legacy.intent.intentId,
+      step: "receipt",
+      valueHash: await receiptHashOf(legacy.intent.intentId),
+      contractAddress: "0xfcfc36e3ea951640d1e495a1e671d66c75eb5123",
+      chainId: 420420777,
+      txHash: hash32(1n, "ab"),
+      blockNumber: 136956n,
+    });
+    const fresh = await settledIntent(95n);
+    expect(fake().writes).toEqual([]); // only one receipt is waiting, below the batch size
+    clock += 1_800;
+    expect(await runPass(ctx())).toMatchObject({ anchored: 1, errors: 0 });
+    expect(await proofOf(legacy.intent.intentId)).toBeNull();
+    expect(await proofOf(fresh.intent.intentId)).toMatchObject({ leafCount: 1 });
   });
 
   it("pauses anchoring with one warning when the relayer cannot pay, then resumes once funded", async () => {
-    const { intent } = await settledIntent();
-    const fake = registry as FakeRegistry;
-    fake.shortOfFunds = true;
-    const warnings: string[] = [];
-    const log: Logger = { ...silent, warn: (m) => void warnings.push(m) };
+    fake().shortOfFunds = true;
+    const warnings: { message: string; fields: unknown }[] = [];
+    const log: Logger = { ...silent, warn: (message, fields) => void warnings.push({ message, fields }) };
+    const created = await awaitingIntent();
+    await includeAndReport(created.intent.intentId, created.callHex, 95n);
+    chain.setDelta(RECIPIENT, 95n, 0n, EXPECTED);
 
     expect(await runPass({ ...ctx(), log })).toMatchObject({ settled: 1, anchored: 0, errors: 0 });
-    expect(warnings).toEqual(["relayer needs funding; anchoring paused"]);
-    expect(fake.refused).toBe(1);
+    expect(warnings.map((w) => w.message)).toEqual(["relayer needs funding; anchoring paused"]);
+    expect(warnings[0]?.fields).toMatchObject({ waiting: 1, retryInSeconds: 600 });
+    expect(fake().refused).toBe(1);
+    // The plan is kept, so the write that resumes is the same root.
+    expect(await listUnconfirmedReceiptBatches(db, fake().address)).toHaveLength(1);
 
     await runPass({ ...ctx(), log }); // still paused: no write attempted, no new warning
-    expect(fake.refused).toBe(1);
+    expect(fake().refused).toBe(1);
     expect(warnings).toHaveLength(1);
 
-    fake.shortOfFunds = false; // the operator funds the relayer
+    fake().shortOfFunds = false; // the operator funds the relayer
     clock += 601;
     expect(await runPass({ ...ctx(), log })).toMatchObject({ anchored: 1, errors: 0 });
-    expect((await listAnchors(db, intent.intentId)).map((a) => a.step)).toEqual(["intent", "receipt"]);
-  });
-
-  it("refuses to anchor when another account recorded the intent hash", async () => {
-    const { intent, intentHash } = await settledIntent();
-    const fake = registry as FakeRegistry;
-    fake.state.set(intentHash, { recorder: "0x00000000000000000000000000000000000000ff", routeId: ZERO_HASH, receiptHash: ZERO_HASH });
-    const pass = await runPass(ctx());
-    expect(pass).toMatchObject({ settled: 1, anchored: 0, errors: 1 });
-    expect(fake.writes).toEqual([]);
-    expect(await listAnchors(db, intent.intentId)).toEqual([]);
+    expect(await proofOf(created.intent.intentId)).toMatchObject({ leafCount: 1 });
   });
 });

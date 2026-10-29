@@ -118,3 +118,25 @@ Once the registry was configured, the watcher anchored both settled intents: `re
 
 The registry is an audit anchor: it proves which receipt RelayMesh committed to, not that a transfer happened.
 The transfer itself is proven by the chain facts above.
+
+## ReceiptBatchRegistry deployment (2026-10-29)
+
+Batch anchoring replaces the two `IntentRegistry` writes per intent with one `recordBatch(root, leafCount)` per batch of receipts.
+
+| Item | Value |
+| --- | --- |
+| Address | `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` |
+| Deployment transaction | `0x773bee333e7240cc1a5dabc44d4da9c5ff72dca7e40e57888773e85199f90580` |
+| Block | #238209 |
+| Deployer and recorder | `0xD0Dd606e328E9402C056d50171CAcAAdFB2563e4` |
+| Cost | 80.38 tPOT (balance at #238208 minus balance at #238209), mostly the Revive storage deposit for the code; the estimate was 81.64 tPOT |
+| Runtime code | 861 bytes, equal to the compiled artifact with the recorder written into its immutable slot (`eth_getCode`) |
+
+### How the deployment was verified
+
+- **The transaction succeeded.** `eth_getTransactionReceipt` returns status `success` and the address above.
+- **The code is the compiled contract.** The deploy script compares `eth_getCode` with the compiled runtime after filling in the recorder at the offsets solc reports.
+- **Only the relayer can write.** `recorder()` returns the relayer address above.
+- **Nothing is recorded yet.** `getBatch` for an unknown root returns all zeros.
+
+No batch has been written on V3 yet; the first one is recorded here once the watcher is configured with this address.

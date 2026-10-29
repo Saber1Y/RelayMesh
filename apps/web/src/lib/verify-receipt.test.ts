@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { keccak256, stringToBytes, type Hex } from "viem";
-import { parseReceipt, ReceiptFormatError, receiptHashOf, verifyReceipt, type AnchorState, type RegistryReader } from "./verify-receipt";
+import { batchLeaf, buildMerkleTree, merkleProof } from "@relaymesh/core";
+import { parseReceipt, ReceiptFormatError, receiptHashOf, verifyReceipt, type AnchorState, type BatchProofClaim, type BatchReader, type BatchState, type RegistryReader } from "./verify-receipt";
 
 // The real receipt of the 150 tPOT transfer settled in block #136917, as downloaded from RelayMesh,
 // and the receipt hash the relayer anchored for it in IntentRegistry (tx 0x7b09dc97…, block #136956).
@@ -66,5 +67,85 @@ describe("receipt verification in the browser", () => {
     expect(() => parseReceipt("{not json")).toThrow(ReceiptFormatError);
     expect(() => parseReceipt(JSON.stringify({ version: 2 }))).toThrow(/version 1/);
     expect(() => parseReceipt(JSON.stringify({ version: 1, intentId: "0x12", intentHash: "0x" }))).toThrow(/intentId/);
+  });
+});
+
+describe("batched receipt verification in the browser", () => {
+  const receipt = parseReceipt(RECEIPT_JSON);
+  const leaf = batchLeaf(receipt.intentHash, ANCHORED_HASH);
+  // A batch of five: this receipt and four other settled intents.
+  const others = [1, 2, 3, 4].map((n) => batchLeaf(keccak256(stringToBytes(`intent-${n}`)), keccak256(stringToBytes(`receipt-${n}`))));
+  const tree = buildMerkleTree([leaf, ...others]);
+  const claim: BatchProofClaim = { receiptHash: ANCHORED_HASH, proof: merkleProof(tree, leaf) };
+  const BATCH: BatchState = { recordedAt: 1_793_270_000n, blockNumber: 240_100n, leafCount: 5 };
+  const BATCH_TX = { txHash: `0x${"5b".repeat(32)}` as Hex, blockNumber: 240_100n };
+
+  function batches(served: BatchProofClaim | null, recorded: Hex[] = [tree.root]): BatchReader & { lookups: Hex[] } {
+    const lookups: Hex[] = [];
+    return {
+      lookups,
+      fetchProof: async () => served,
+      getBatch: async (root) => {
+        lookups.push(root);
+        return recorded.includes(root) ? BATCH : null;
+      },
+      findBatchTx: async (root, block) => (recorded.includes(root) && block === BATCH.blockNumber ? BATCH_TX : null),
+    };
+  }
+
+  it("folds the proof from a leaf computed here up to a root recorded on chain", async () => {
+    const result = await verifyReceipt(receipt, reader(null), batches(claim));
+    expect(result).toMatchObject({
+      verdict: "match",
+      anchoredIn: "batch",
+      anchoredHash: ANCHORED_HASH,
+      batch: { leaf, root: tree.root, proof: claim.proof, onChain: { leafCount: 5 } },
+      anchorTx: BATCH_TX,
+      routeMatches: null,
+    });
+  });
+
+  it("catches one changed digit in a batched receipt, and shows the hash the chain commits to", async () => {
+    const tampered = parseReceipt(RECEIPT_JSON.replace('"observedAmount":"149900000000000000000"', '"observedAmount":"249900000000000000000"'));
+    const reads = batches(claim);
+    const result = await verifyReceipt(tampered, reader(null), reads);
+    expect(result).toMatchObject({ verdict: "mismatch", anchoredIn: "batch", anchoredHash: ANCHORED_HASH, batch: { root: tree.root } });
+    expect(result.computedHash).not.toBe(ANCHORED_HASH);
+    expect(result.batch?.leaf).not.toBe(leaf);
+    // The tampered receipt's own fold reached a root nobody recorded.
+    expect(reads.lookups[0]).not.toBe(tree.root);
+  });
+
+  it("rejects a proof that leads to no recorded root, whatever RelayMesh claims", async () => {
+    const forged = { receiptHash: ANCHORED_HASH, proof: [...claim.proof.slice(0, -1), keccak256(stringToBytes("forged"))] };
+    expect(await verifyReceipt(receipt, reader(null), batches(forged))).toMatchObject({ verdict: "proof_invalid", anchoredIn: null, anchoredHash: null, anchorTx: null });
+    expect(await verifyReceipt(receipt, reader(null), batches(claim, []))).toMatchObject({ verdict: "proof_invalid" });
+    expect(await verifyReceipt(receipt, reader(null), batches({ receiptHash: ANCHORED_HASH, proof: ["0xnot-a-hash" as Hex] }))).toMatchObject({ verdict: "proof_invalid" });
+  });
+
+  it("rejects a proof with a level missing", async () => {
+    expect(await verifyReceipt(receipt, reader(null), batches({ receiptHash: ANCHORED_HASH, proof: claim.proof.slice(1) }))).toMatchObject({ verdict: "proof_invalid" });
+  });
+
+  it("checks IntentRegistry first, so receipts anchored before batching verify exactly as before", async () => {
+    const reads = batches(claim);
+    const result = await verifyReceipt(receipt, reader(ANCHORED), reads);
+    expect(result).toMatchObject({ verdict: "match", anchoredIn: "registry", anchoredHash: ANCHORED_HASH, batch: null, routeMatches: true, anchorTx: { blockNumber: 136956n } });
+    expect(reads.lookups).toEqual([]);
+  });
+
+  it("uses the batch when IntentRegistry recorded the intent but never its receipt", async () => {
+    const result = await verifyReceipt(receipt, reader({ ...ANCHORED, receiptHash: ZERO_HASH }), batches(claim));
+    expect(result).toMatchObject({ verdict: "match", anchoredIn: "batch", routeMatches: true });
+  });
+
+  it("reports a receipt RelayMesh has not batched yet as not anchored", async () => {
+    expect(await verifyReceipt(receipt, reader(null), batches(null))).toMatchObject({ verdict: "not_anchored", batch: null });
+    expect(await verifyReceipt(receipt, null, batches(null))).toMatchObject({ verdict: "not_anchored" });
+  });
+
+  it("keeps the verdict when the batch transaction search fails", async () => {
+    const reads = { ...batches(claim), findBatchTx: async () => Promise.reject(new Error("log range too large")) };
+    expect(await verifyReceipt(receipt, reader(null), reads)).toMatchObject({ verdict: "match", anchorTx: null });
   });
 });

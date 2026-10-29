@@ -1,11 +1,16 @@
 import { keccak256, stringToBytes, type Hex } from "viem";
-import { hashCanonical, RECEIPT_HASH_DOMAIN } from "@relaymesh/core";
+import { batchLeaf, hashCanonical, merkleRootFromProof, RECEIPT_HASH_DOMAIN } from "@relaymesh/core";
 
 /**
  * Independent receipt verification, run in the visitor's browser. The receipt is re-hashed here with
- * the same canonical encoding the server uses, and compared with the hash RelayMesh's relayer wrote
- * to IntentRegistry, read straight from the PortalDot V3 EVM RPC. Where the receipt came from does
- * not matter: a single changed byte changes the hash.
+ * the same canonical encoding the server uses, and compared with what RelayMesh's relayer committed
+ * to on chain, read straight from the PortalDot V3 EVM RPC. Where the receipt came from does not
+ * matter: a single changed byte changes the hash.
+ *
+ * Receipts anchored before batching sit in IntentRegistry, one receipt hash per intent. Later ones sit
+ * in ReceiptBatchRegistry as part of a Merkle root: the browser recomputes the receipt's leaf, folds
+ * RelayMesh's proof up to a root, and checks that exact root is recorded on chain. The proof comes
+ * from RelayMesh's API, but a proof cannot be forged to reach a recorded root, so it needs no trust.
  */
 
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
@@ -95,40 +100,122 @@ export interface AnchorTx {
   blockNumber: bigint;
 }
 
-/** What the checker reads from the chain. In the browser this is viem against the V3 EVM RPC. */
+/** What the checker reads from IntentRegistry. In the browser this is viem against the V3 EVM RPC. */
 export interface RegistryReader {
   getIntent(intentHash: Hex): Promise<AnchorState>;
   /** The transaction that recorded this receipt, if the RPC can search that far back. */
   findReceiptTx(intentHash: Hex): Promise<AnchorTx | null>;
 }
 
+/** RelayMesh's claim of where an intent's receipt is batched. Untrusted: every part is checked against the chain. */
+export interface BatchProofClaim {
+  receiptHash: Hex;
+  proof: Hex[];
+}
+
+export interface BatchState {
+  /** Block timestamp of the recording transaction, in unix seconds. */
+  recordedAt: bigint;
+  blockNumber: bigint;
+  leafCount: number;
+}
+
+/** What the checker reads for batched receipts: the proof from RelayMesh, everything else from ReceiptBatchRegistry. */
+export interface BatchReader {
+  fetchProof(intentId: Hex): Promise<BatchProofClaim | null>;
+  /** The batch recorded with this root, or null if the root was never recorded. */
+  getBatch(root: Hex): Promise<BatchState | null>;
+  findBatchTx(root: Hex, blockNumber: bigint): Promise<AnchorTx | null>;
+}
+
 export type Verdict =
-  /** The on-chain receipt hash equals the hash of this receipt. */
+  /** The chain commits to this receipt's hash, directly or through a batch root. */
   | "match"
-  /** The intent is anchored with a different receipt hash: the receipt was changed. */
+  /** The chain commits to a different receipt hash for this intent: the receipt was changed. */
   | "mismatch"
-  /** The intent is recorded but its receipt is not yet. */
+  /** RelayMesh offered a batch proof, but it leads to no root recorded on chain. */
+  | "proof_invalid"
+  /** The intent is recorded in IntentRegistry but its receipt is not yet. */
   | "receipt_pending"
   /** Nothing is recorded for this intent hash. */
   | "not_anchored";
 
+export interface BatchVerification {
+  /** The leaf computed here from the receipt's intent hash and the browser-computed receipt hash. */
+  leaf: Hex;
+  proof: Hex[];
+  /** The recorded root the proof leads to: from this receipt for "match", from RelayMesh's claimed hash for "mismatch". */
+  root: Hex | null;
+  /** The batch as recorded on chain; null when no root the proof leads to is recorded. */
+  onChain: BatchState | null;
+}
+
 export interface Verification {
   verdict: Verdict;
   computedHash: Hex;
+  /** Which registry commits to the receipt, if one does. */
+  anchoredIn: "registry" | "batch" | null;
+  /** The receipt hash the chain commits to for this intent, if any. */
+  anchoredHash: Hex | null;
+  /** IntentRegistry's record of the intent (all zeros when it has none). */
   onChain: AnchorState;
-  /** The on-chain route ID equals keccak256 of the receipt's route ID. */
+  /** The on-chain route ID equals keccak256 of the receipt's route ID; null when IntentRegistry has no record. */
   routeMatches: boolean | null;
+  batch: BatchVerification | null;
   anchorTx: AnchorTx | null;
 }
 
-export async function verifyReceipt(receipt: ParsedReceipt, reader: RegistryReader): Promise<Verification> {
+const EMPTY_STATE: AnchorState = { recorder: ZERO_ADDRESS as Hex, routeId: ZERO_HASH, receiptHash: ZERO_HASH };
+
+/** The root a proof leads to from this leaf, or null if the proof is malformed. */
+function foldProof(leaf: Hex, proof: Hex[]): Hex | null {
+  try {
+    return merkleRootFromProof(leaf, proof);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Checks a receipt against IntentRegistry first, then against ReceiptBatchRegistry. Either reader may
+ * be null when this deployment has no such contract.
+ */
+export async function verifyReceipt(receipt: ParsedReceipt, reader: RegistryReader | null, batches: BatchReader | null = null): Promise<Verification> {
   const computedHash = receiptHashOf(receipt);
-  const onChain = await reader.getIntent(receipt.intentHash);
+  const onChain = reader ? await reader.getIntent(receipt.intentHash) : EMPTY_STATE;
   const recorded = onChain.recorder.toLowerCase() !== ZERO_ADDRESS;
-  const anchored = onChain.receiptHash !== ZERO_HASH;
-  const verdict: Verdict = !recorded ? "not_anchored" : !anchored ? "receipt_pending" : onChain.receiptHash.toLowerCase() === computedHash.toLowerCase() ? "match" : "mismatch";
   const routeMatches = recorded ? onChain.routeId.toLowerCase() === keccak256(stringToBytes(receipt.routeId)).toLowerCase() : null;
-  // The transaction is supporting detail: a failed search never changes the verdict.
-  const anchorTx = anchored ? await reader.findReceiptTx(receipt.intentHash).catch(() => null) : null;
-  return { verdict, computedHash, onChain, routeMatches, anchorTx };
+  const base = { computedHash, onChain, routeMatches };
+
+  if (reader && onChain.receiptHash !== ZERO_HASH) {
+    const verdict: Verdict = onChain.receiptHash.toLowerCase() === computedHash.toLowerCase() ? "match" : "mismatch";
+    // The transaction is supporting detail: a failed search never changes the verdict.
+    const anchorTx = await reader.findReceiptTx(receipt.intentHash).catch(() => null);
+    return { ...base, verdict, anchoredIn: "registry", anchoredHash: onChain.receiptHash, batch: null, anchorTx };
+  }
+
+  const pending: Verification = { ...base, verdict: recorded ? "receipt_pending" : "not_anchored", anchoredIn: null, anchoredHash: null, batch: null, anchorTx: null };
+  const claim = batches && (await batches.fetchProof(receipt.intentId));
+  if (!batches || !claim) return pending;
+
+  // The leaf comes from the receipt in hand, never from RelayMesh.
+  const intentHash = receipt.intentHash.toLowerCase() as Hex;
+  const leaf = batchLeaf(intentHash, computedHash);
+  const root = foldProof(leaf, claim.proof);
+  const batch = root && (await batches.getBatch(root));
+  if (root && batch) {
+    const anchorTx = await batches.findBatchTx(root, batch.blockNumber).catch(() => null);
+    return { ...base, verdict: "match", anchoredIn: "batch", anchoredHash: computedHash, batch: { leaf, proof: claim.proof, root, onChain: batch }, anchorTx };
+  }
+
+  // This receipt is not in a recorded batch. If RelayMesh's own claimed receipt hash is, the chain
+  // commits to a different receipt for this intent, so the one in hand was changed.
+  const claimed = /^0x[0-9a-f]{64}$/.test(claim.receiptHash) ? claim.receiptHash : null;
+  const claimedRoot = claimed && claimed !== computedHash ? foldProof(batchLeaf(intentHash, claimed), claim.proof) : null;
+  const claimedBatch = claimedRoot && (await batches.getBatch(claimedRoot));
+  if (claimed && claimedRoot && claimedBatch) {
+    const anchorTx = await batches.findBatchTx(claimedRoot, claimedBatch.blockNumber).catch(() => null);
+    return { ...base, verdict: "mismatch", anchoredIn: "batch", anchoredHash: claimed, batch: { leaf, proof: claim.proof, root: claimedRoot, onChain: claimedBatch }, anchorTx };
+  }
+  return { ...base, verdict: "proof_invalid", anchoredIn: null, anchoredHash: null, batch: { leaf, proof: claim.proof, root: null, onChain: null }, anchorTx: null };
 }

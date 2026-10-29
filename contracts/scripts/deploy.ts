@@ -1,22 +1,39 @@
-// Deploys IntentRegistry to the PortalDot V3 testnet and verifies it by reading code and state back.
-// Requires DEPLOYER_PRIVATE_KEY (an EVM key funded with tPOT on the V3 EVM side). The deployment
-// estimate on 2026-10-20 was about 96 tPOT, mostly Revive's refundable storage deposit.
+// Deploys a RelayMesh contract to the PortalDot V3 testnet and verifies it by reading code and state back.
+// Usage: tsx scripts/deploy.ts [IntentRegistry | ReceiptBatchRegistry] (default IntentRegistry).
+// Requires DEPLOYER_PRIVATE_KEY (an EVM key funded with tPOT on the V3 EVM side). ReceiptBatchRegistry
+// fixes its recorder at deployment: BATCH_RECORDER_ADDRESS, or the deployer's own address if unset.
+// Estimates: IntentRegistry about 96 tPOT (2026-10-20), ReceiptBatchRegistry about 82 tPOT
+// (2026-10-29), mostly Revive's refundable storage deposit for the code.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createWalletClient, formatEther, http, type Abi, type Hex } from "viem";
+import { createWalletClient, encodeAbiParameters, encodeDeployData, formatEther, getAddress, http, type Abi, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { assertEvmChainId, createV3PublicClient, loadPortaldotV3Config, portaldotV3EvmChain } from "@relaymesh/chains";
+import { runtimeWithImmutables, type ImmutableReferences } from "./solc";
+
+const CONTRACTS = ["IntentRegistry", "ReceiptBatchRegistry"] as const;
+const name = (process.argv[2] ?? "IntentRegistry") as (typeof CONTRACTS)[number];
+if (!CONTRACTS.includes(name)) {
+  console.error(`Unknown contract ${name}; expected one of ${CONTRACTS.join(", ")}.`);
+  process.exit(1);
+}
 
 const key = process.env.DEPLOYER_PRIVATE_KEY;
 if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key)) {
   console.error("Set DEPLOYER_PRIVATE_KEY to a 0x-prefixed 32-byte hex key (see .env.example).");
   process.exit(1);
 }
+const recorderEnv = process.env.BATCH_RECORDER_ADDRESS;
+if (recorderEnv && !/^0x[0-9a-fA-F]{40}$/.test(recorderEnv)) {
+  console.error("BATCH_RECORDER_ADDRESS must be a 0x-prefixed 20-byte hex address.");
+  process.exit(1);
+}
 
-const artifact = JSON.parse(readFileSync(join(import.meta.dirname, "../artifacts/IntentRegistry.json"), "utf8")) as {
+const artifact = JSON.parse(readFileSync(join(import.meta.dirname, `../artifacts/${name}.json`), "utf8")) as {
   abi: Abi;
   bytecode: Hex;
   deployedBytecode: Hex;
+  immutableReferences?: ImmutableReferences;
 };
 
 const config = loadPortaldotV3Config();
@@ -25,8 +42,17 @@ await assertEvmChainId(publicClient, config.evmChainId);
 const account = privateKeyToAccount(key as Hex);
 const wallet = createWalletClient({ account, chain: portaldotV3EvmChain(config), transport: http(config.evmRpcUrl) });
 
+const recorder = getAddress(recorderEnv ?? account.address);
+const args: readonly unknown[] = name === "ReceiptBatchRegistry" ? [recorder] : [];
+// The runtime code the deployment must hold. The recorder is ReceiptBatchRegistry's only immutable.
+const refs = artifact.immutableReferences ?? {};
+const recorderWord = encodeAbiParameters([{ type: "address" }], [recorder]);
+const expectedCode = runtimeWithImmutables({ deployedBytecode: artifact.deployedBytecode, immutableReferences: refs }, Object.fromEntries(Object.keys(refs).map((id) => [id, recorderWord])));
+if (name === "ReceiptBatchRegistry") console.log(`Recorder (the only account that may write batches): ${recorder}`);
+
+const deploy = { abi: artifact.abi, bytecode: artifact.bytecode, args } as const;
 const balance = await publicClient.getBalance({ address: account.address });
-const gas = await publicClient.estimateGas({ account, data: artifact.bytecode });
+const gas = await publicClient.estimateGas({ account, data: encodeDeployData(deploy) });
 const gasPrice = await publicClient.getGasPrice();
 console.log(`Deployer ${account.address}: balance ${formatEther(balance)} tPOT, estimated cost ${formatEther(gas * gasPrice)} tPOT`);
 if (balance < gas * gasPrice) {
@@ -34,7 +60,7 @@ if (balance < gas * gasPrice) {
   process.exit(1);
 }
 
-const txHash = await wallet.deployContract({ abi: artifact.abi, bytecode: artifact.bytecode });
+const txHash = await wallet.deployContract(deploy);
 console.log(`Submitted ${txHash}`);
 const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash, timeout: 180_000 });
 if (receipt.status !== "success" || !receipt.contractAddress) {
@@ -43,15 +69,26 @@ if (receipt.status !== "success" || !receipt.contractAddress) {
 }
 
 const code = await publicClient.getCode({ address: receipt.contractAddress });
-if (code !== artifact.deployedBytecode) {
+if (code?.toLowerCase() !== expectedCode.toLowerCase()) {
   console.error("Deployed code does not match the compiled artifact.");
   process.exit(1);
 }
+if (name === "ReceiptBatchRegistry") {
+  const onChain = (await publicClient.readContract({ address: receipt.contractAddress, abi: artifact.abi, functionName: "recorder" })) as Hex;
+  if (getAddress(onChain) !== recorder) {
+    console.error(`Deployed recorder ${onChain} is not ${recorder}.`);
+    process.exit(1);
+  }
+}
 console.log(
   JSON.stringify(
-    { contract: "IntentRegistry", address: receipt.contractAddress, txHash, blockNumber: receipt.blockNumber.toString(), chainId: config.evmChainId },
+    { contract: name, address: receipt.contractAddress, txHash, blockNumber: receipt.blockNumber.toString(), chainId: config.evmChainId, ...(args.length > 0 && { recorder }) },
     null,
     2,
   ),
 );
-console.log("Record these values in docs/evidence.md and set INTENT_REGISTRY_ADDRESS for the worker.");
+console.log(
+  name === "ReceiptBatchRegistry"
+    ? "Record these values in docs/evidence.md, then set RECEIPT_BATCH_REGISTRY_ADDRESS for the worker and the web app."
+    : "Record these values in docs/evidence.md and set INTENT_REGISTRY_ADDRESS for the web app's receipt checker.",
+);

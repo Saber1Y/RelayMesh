@@ -150,8 +150,22 @@ curl -s localhost:3010/api/intents/$INTENT_ID/receipt -D - | grep -i x-receipt-h
 `keccak256("relaymesh.receipt.v1\n" + file)` reproduces the hash; this was checked against a real download.
 
 The **Verify** page ([/verify](https://relaymesh.162-62-231-147.sslip.io/verify)) does this in the visitor's browser.
-Given an intent ID or a pasted receipt, it hashes the receipt locally and reads `IntentRegistry` straight from the V3 EVM RPC, so the verdict never relies on RelayMesh's server.
-It reports whether the receipt matches the chain, does not match (a changed receipt), is recorded but not anchored yet, or was never anchored, and shows the anchoring transaction.
+Given an intent ID or a pasted receipt, it hashes the receipt locally and reads the registries straight from the V3 EVM RPC, so the verdict never relies on RelayMesh's server.
+Receipts anchored one by one are checked against `IntentRegistry` exactly as before.
+For a receipt anchored in a batch, the browser recomputes its leaf, folds the Merkle proof RelayMesh serves up to a root, and checks that root is recorded in `ReceiptBatchRegistry`; a forged proof cannot reach a recorded root, so the proof needs no trust.
+It reports whether the receipt matches the chain, does not match (a changed receipt), carries a proof that leads nowhere, or is not anchored yet, and shows the anchoring transaction.
+
+### Batch anchoring
+
+Every settled receipt is committed on chain, but not one write at a time.
+Anchoring each intent cost two `IntentRegistry` writes, about 23 tPOT per transfer, almost all of it Revive's storage deposit, and it drained the relayer.
+The watcher now collects settled receipts and writes one Merkle root per batch to `ReceiptBatchRegistry`, about 3.9 tPOT whatever the batch size (simulated on V3).
+A batch is written when 20 receipts are waiting or the oldest has waited 30 minutes (`ANCHOR_BATCH_SIZE`, `ANCHOR_BATCH_MAX_WAIT_MINUTES`).
+
+- Leaf: `keccak256("relaymesh.batch.leaf.v1\n" + {"intentHash","receiptHash"})`, the same canonical-JSON hashing as receipts.
+- Nodes: sorted-pair hashing under `relaymesh.batch.node.v1`, so a proof is just the sibling hashes; leaves and nodes never share a domain.
+- Each batch is stored with every leaf and proof before its root is sent, so a crash before or after mining resumes with the same root, read back from the contract.
+- The four receipts already in `IntentRegistry` are never re-batched and still verify there.
 
 ### Checks for the live PortalDot bridge
 
@@ -181,6 +195,7 @@ flowchart TB
         Sub[Substrate RPC]
         EVM[EVM RPC 420420777]
         Reg[IntentRegistry<br/>0xfcfc...5123]
+        Batch[ReceiptBatchRegistry<br/>0x0a4e...ae5e]
     end
     UI --> API
     Wallet -->|signed extrinsic| Sub
@@ -190,7 +205,9 @@ flowchart TB
     Worker --> PG
     Worker -->|finality, scan| Sub
     Worker -->|balance at N-1 and N| EVM
-    Worker -->|anchor hashes| Reg
+    Worker -->|anchor batch roots| Batch
+    UI -->|verify receipts| Reg
+    UI -->|verify batch roots| Batch
 ```
 
 ```mermaid
@@ -202,7 +219,7 @@ flowchart LR
     E --> F[Finalized]
     F --> G[Balance delta<br/>measured]
     G --> H[Receipt]
-    H --> I[Registry anchor]
+    H --> I[Batch anchor:<br/>Merkle root]
 ```
 
 The full diagrams, including the state machine and a sequence diagram, are in [docs/architecture.md](docs/architecture.md).
@@ -212,7 +229,7 @@ The full diagrams, including the state machine and a sequence diagram, are in [d
 | Wallet | User's browser extension | Yes, only what the user signs | Signs the planned call |
 | Web app | Browser | No | Form, review, call decoding, timeline, receipt |
 | API | Node.js (Next.js route handlers) | No | Validation, quotes, plans, inclusion checks |
-| Watcher | Node.js process | No user funds; relayer pays registry gas | Finality, balance measurement, expiry, anchoring |
+| Watcher | Node.js process | No user funds; relayer pays for batch writes | Finality, balance measurement, expiry, batch anchoring |
 | Postgres | Docker locally | No | Append-only record of everything observed |
 
 ## Component by component
@@ -225,18 +242,22 @@ The full diagrams, including the state machine and a sequence diagram, are in [d
 | `packages/core/src/status.ts` | State machine and evidence rules |
 | `packages/core/src/settlement.ts` | Decides settled, pending or needs review; never settles on conflicting evidence |
 | `packages/core/src/receipt.ts` | Deterministic receipt, hash and canonical JSON |
+| `packages/core/src/merkle.ts` | Batch leaves, sorted-pair Merkle trees, proofs and proof checks |
 | `packages/chains/src/substrate-verify.ts` | Reads a block and verifies an extrinsic's call bytes, signer and outcome |
 | `packages/chains/src/v3-chain-reader.ts` | Finality, block scanning, timestamps, historical `eth_getBalance` |
 | `packages/routes/src/providers/v3-substrate-to-evm.ts` | The live route: mapping, balances, fees, expected output, execution plan |
 | `packages/routes/src/providers/ibridge.ts` | iBridge slot that always reports unavailable |
 | `packages/db/src/store.ts` | Locked, rule-checked writes for intents, quotes, plans and status |
+| `packages/db/src/batch-store.ts` | Planned batches, leaves and proofs (re-checked before storing), mined batch transactions |
 
 ### Contracts
 
 | File | Responsibility |
 | --- | --- |
-| `contracts/src/IntentRegistry.sol` | Records an intent hash and route, then the receipt hash, from the same recorder |
-| `contracts/scripts/deploy.ts` | Deploys to V3 and checks the deployed code matches the artifact |
+| `contracts/src/IntentRegistry.sol` | Records an intent hash and route, then the receipt hash, from the same recorder (per-intent anchoring, before batching) |
+| `contracts/src/ReceiptBatchRegistry.sol` | Records one Merkle root per batch of receipts; only the recorder fixed at deployment can write |
+| `contracts/test/ReceiptBatchRegistryChecks.sol` | Behaviour checks that run inside one `eth_call` on V3, since its RPC rejects state overrides |
+| `contracts/scripts/deploy.ts` | Deploys either contract to V3 and checks the deployed code, immutables included, matches the artifact |
 
 ### Apps
 
@@ -244,7 +265,8 @@ The full diagrams, including the state machine and a sequence diagram, are in [d
 | --- | --- |
 | `apps/web/src/app/api` | Intent, quote, execution, source, receipt and provider endpoints |
 | `apps/web/src/components/sign-panel.tsx` | Browser-side call decoding, intent check and wallet signing |
-| `apps/worker/src/watcher.ts` | Scan, confirm, measure, expire and anchor stages |
+| `apps/worker/src/watcher.ts` | Scan, confirm, measure, expire and batch-anchor stages |
+| `apps/web/src/lib/verify-receipt.ts` | In-browser receipt check against `IntentRegistry` or a batch root |
 
 ## Safety, enforced in code
 
@@ -270,7 +292,8 @@ The full diagrams, including the state machine and a sequence diagram, are in [d
 **Writes**
 
 - The user's wallet submits `balances.transferKeepAlive` from a Substrate account to the account that controls the target EVM address.
-- The watcher's relayer calls `IntentRegistry.recordIntent` and `recordReceipt` on the deployed contract `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` after each settlement.
+- The watcher's relayer calls `ReceiptBatchRegistry.recordBatch` once per batch of settled receipts, on the deployed contract `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e`.
+- Until batching, it called `IntentRegistry.recordIntent` and `recordReceipt` on `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` after each settlement; those four receipts stay anchored there.
 
 The route uses Revive's account mapping: an EVM address is controlled by its mapped native account or by its fallback account `h160 ++ 0xEE * 12`, and `eth_getBalance` reports that account's reducible balance times 10^4.
 
@@ -311,8 +334,9 @@ Those blocks are located from on-chain block timestamps, read from each block's 
 | Server-side verification of reported transactions | Real - rejection paths verified live against real blocks |
 | Watcher finality, scanning and expiry | Real - ran against live V3; expired stale intents correctly |
 | Historical `eth_getBalance` delta measurement | Real - measured 0 to 0.9 tPOT across block #122911 for a live transfer |
-| A signed tPOT transfer settled end to end | Real - two transfers settled, in blocks #122911 and #136917 ([evidence](docs/evidence.md)) |
-| `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; both settled receipts anchored and re-checked against the contract |
+| A signed tPOT transfer settled end to end | Real - four transfers settled, in blocks #122911, #136917, #172163 and #232117 ([evidence](docs/evidence.md)) |
+| `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; four settled receipts anchored and re-checked against the contract |
+| `ReceiptBatchRegistry` batch anchoring | Deployed at `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` (block #238209); behaviour checked inside an `eth_call` on V3 and run end to end against a local anvil chain. No batch written on V3 yet |
 | iBridge cross-chain route | Not yet established - no public interface from PortalDot; confirmed closed to third parties through demo day |
 | Checking live PortalDot bridge transfers (POT to BSC) | Real - read-only, verified a 33 POT deposit against its 32.01 WPOT payout on BSC |
 | Hosted deployment | Real - web app and watcher on an always-on server behind Caddy, Postgres on Render, serving the same settled transfers and receipts |
@@ -324,11 +348,14 @@ What remains is an iBridge route once PortalDot publishes an interface.
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
-| `packages/core` | 51 | Amounts, canonical hashing, intents, state machine, quotes, settlement, idempotency, receipts |
+| `packages/core` | 62 | Amounts, canonical hashing, intents, state machine, quotes, settlement, idempotency, receipts, Merkle batches and proofs |
 | `packages/routes` | 18 | Substrate-to-EVM quoting and plans, iBridge slot, ranking, rejection reporting |
 | `packages/chains` | 4 | Revive address mapping |
-| `packages/db` (Postgres) | 18 | Round trips, idempotency races, append-only triggers, plans, concurrency |
-| `apps/worker` (Postgres) | 18 | Settlement, forks, short and missing deliveries, pruned state, scanner, expiry, clock skew, anchoring |
+| `contracts` | 4 | Every source compiles without warnings, committed ABIs are current, the recorder immutable lands where solc says |
+| `apps/web` | 17 | In-browser receipt checks against the real anchored receipt: registry and batch matches, tampered receipts, forged proofs |
+| `apps/worker` | 12 | Scan ranges, batching configuration and the upgrade path from per-intent anchoring |
+| `packages/db` (Postgres) | 23 | Round trips, idempotency races, append-only triggers, plans, concurrency, batch plans and proofs |
+| `apps/worker` (Postgres) | 32 | Settlement, forks, short and missing deliveries, pruned state, scanner, expiry, clock skew, batch thresholds, crash recovery, the funds pause |
 
 ```bash
 cd RelayMesh
@@ -337,7 +364,8 @@ pnpm db:up && pnpm test:db  # Postgres integration tests (resets the relaymesh_t
 pnpm typecheck && pnpm lint
 ```
 
-The watcher tests use an in-memory V3 chain and registry as test doubles; the database is real.
+The watcher tests use an in-memory V3 chain and batch registry as test doubles; the database is real.
+The contract tests compile every source and check the committed ABIs; `pnpm --filter @relaymesh/contracts simulate:batch-registry` runs the contract's behaviour checks on V3 itself.
 The web app has no automated UI tests yet; its flows were verified manually in a browser against the live testnet.
 
 ## Run it locally
@@ -372,7 +400,9 @@ pnpm worker
 cd RelayMesh/contracts
 pnpm compile
 pnpm simulate-deploy  # read-only check against V3
+pnpm simulate:batch-registry  # read-only: behaviour checks and costs on V3
 pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
+pnpm deploy:batch-registry  # about 81 tPOT; recorder = BATCH_RECORDER_ADDRESS or the deployer
 ```
 
 ## The one-flow demo
@@ -402,9 +432,13 @@ pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
 
 | Variable | Purpose |
 | --- | --- |
-| `INTENT_REGISTRY_ADDRESS` | Deployed `IntentRegistry`; anchoring is off unless set with the key below. The web app's receipt checker reads it too |
-| `INTENT_REGISTRY_DEPLOY_BLOCK` | Block the registry was deployed in (136936 on V3); lets the receipt checker show the anchoring transaction |
-| `RELAYER_PRIVATE_KEY` | EVM key that pays for registry writes |
+| `RECEIPT_BATCH_REGISTRY_ADDRESS` | Deployed `ReceiptBatchRegistry`; anchoring is off unless set with the key below. The web app's receipt checker reads it too |
+| `RELAYER_PRIVATE_KEY` | EVM key that pays for batch writes; must be the contract's recorder |
+| `ANCHOR_BATCH_SIZE` | Write a batch once this many receipts wait (default 20) |
+| `ANCHOR_BATCH_MAX_WAIT_MINUTES` | ...or once the oldest has waited this long (default 30) |
+| `ANCHOR_BATCH_MAX_LEAVES` | Most receipts in one batch (default 256) |
+| `INTENT_REGISTRY_ADDRESS` | `IntentRegistry`, read by the web app's receipt checker for receipts anchored before batching |
+| `INTENT_REGISTRY_DEPLOY_BLOCK` | Block that registry was deployed in (136936 on V3); lets the receipt checker show its anchoring transactions |
 | `WATCHER_POLL_MS` | Delay between passes (default 6000) |
 | `WATCHER_SCAN_BACKFILL_BLOCKS` | First-start scan depth (default 150) |
 | `WATCHER_MAX_BLOCKS_PER_PASS` | Scan limit per pass (default 100) |
@@ -414,7 +448,8 @@ pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
 
 | Variable | Purpose |
 | --- | --- |
-| `DEPLOYER_PRIVATE_KEY` | EVM key used by `deploy:registry` |
+| `DEPLOYER_PRIVATE_KEY` | EVM key used by `deploy:registry` and `deploy:batch-registry` |
+| `BATCH_RECORDER_ADDRESS` | `ReceiptBatchRegistry`'s only writer, fixed at deployment (defaults to the deployer) |
 
 ## Deploy
 
@@ -441,7 +476,7 @@ The watcher must run nonstop, so it runs next to the web app under PM2:
 ```bash
 git clone https://github.com/Saber1Y/RelayMesh.git relaymesh && cd relaymesh
 corepack pnpm install --frozen-lockfile --filter "@relaymesh/worker..." --filter "@relaymesh/db..."
-# .env: DATABASE_URL (external URL with ?sslmode=require), INTENT_REGISTRY_ADDRESS, RELAYER_PRIVATE_KEY
+# .env: DATABASE_URL (external URL with ?sslmode=require), RECEIPT_BATCH_REGISTRY_ADDRESS, RELAYER_PRIVATE_KEY
 node --import tsx --env-file=.env packages/db/src/migrate-cli.ts
 pm2 start apps/worker/ecosystem.config.cjs && pm2 save
 ```
@@ -452,7 +487,8 @@ Run only one watcher per relayer key.
 
 ### Contract
 
-`pnpm --filter @relaymesh/contracts deploy:registry`, then set `INTENT_REGISTRY_ADDRESS` and `RELAYER_PRIVATE_KEY` for the watcher.
+`pnpm --filter @relaymesh/contracts deploy:batch-registry`, then set `RECEIPT_BATCH_REGISTRY_ADDRESS` for the watcher and the web app, and `RELAYER_PRIVATE_KEY` (the recorder) for the watcher.
+A watcher that still has only `INTENT_REGISTRY_ADDRESS` and `RELAYER_PRIVATE_KEY` keeps settling and logs that anchoring is off.
 
 ## Project layout
 
@@ -466,7 +502,7 @@ RelayMesh/
     chains/       # PortalDot V3 Substrate and EVM access
     routes/       # route providers and ranking
     db/           # Drizzle schema, migrations, store
-  contracts/      # IntentRegistry, scripts, generated ABI
+  contracts/      # IntentRegistry, ReceiptBatchRegistry, scripts, generated ABIs
   docs/
     architecture.md
     devlog.md     # dated record of every spike and verification
