@@ -1,5 +1,6 @@
 import "server-only";
 import type { ApiPromise } from "@polkadot/api";
+import type { Hex } from "viem";
 import { connectSubstrate, createV3NativeClient, loadPortaldotV3Config, SERVER_RPC_TIMEOUT_MS } from "@relaymesh/chains";
 import { connectDb, type DbHandle } from "@relaymesh/db";
 import { IBridgeProvider, V3SubstrateToEvmProvider, type RouteProvider } from "@relaymesh/routes";
@@ -53,4 +54,10 @@ export function describeProviders(): { id: string; name: string; description: st
 
 export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
+}
+
+/** ReceiptBatchRegistry, from the same environment the watcher anchors with; null when not deployed. */
+export function batchRegistryAddress(): Hex | null {
+  const address = process.env.RECEIPT_BATCH_REGISTRY_ADDRESS;
+  return address && /^0x[0-9a-fA-F]{40}$/.test(address) ? (address.toLowerCase() as Hex) : null;
 }
