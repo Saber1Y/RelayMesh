@@ -348,13 +348,13 @@ What remains is an iBridge route once PortalDot publishes an interface.
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
-| `packages/core` | 62 | Amounts, canonical hashing, intents, state machine, quotes, settlement, idempotency, receipts, Merkle batches and proofs |
+| `packages/core` | 74 | Amounts, canonical hashing, intents, state machine, quotes, settlement, idempotency, receipts, Merkle batches and proofs, bridge payout matching |
 | `packages/routes` | 18 | Substrate-to-EVM quoting and plans, iBridge slot, ranking, rejection reporting |
 | `packages/chains` | 4 | Revive address mapping |
 | `contracts` | 4 | Every source compiles without warnings, committed ABIs are current, the recorder immutable lands where solc says |
 | `apps/web` | 17 | In-browser receipt checks against the real anchored receipt: registry and batch matches, tampered receipts, forged proofs |
 | `apps/worker` | 12 | Scan ranges, batching configuration and the upgrade path from per-intent anchoring |
-| `packages/db` (Postgres) | 23 | Round trips, idempotency races, append-only triggers, plans, concurrency, batch plans and proofs |
+| `packages/db` (Postgres) | 24 | Round trips, idempotency races, append-only triggers, plans, concurrency, batch plans and proofs, anchored-receipt counts |
 | `apps/worker` (Postgres) | 32 | Settlement, forks, short and missing deliveries, pruned state, scanner, expiry, clock skew, batch thresholds, crash recovery, the funds pause |
 
 ```bash
