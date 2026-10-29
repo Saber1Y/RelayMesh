@@ -411,3 +411,19 @@ Deploying it costs about 82 tPOT and waits for approval.
 It cost 80.38 tPOT against an estimate of 81.64 tPOT, and the deploy script confirmed the on-chain code and recorder.
 The relayer kept 9.02 tPOT, enough for one batch write at the watcher's 25% safety margin, and for a second one only just.
 No batch has been written on V3 yet: the watcher needs this branch, the two new migrations and `RECEIPT_BATCH_REGISTRY_ADDRESS` first.
+
+## 2026-10-29: Batch anchoring switched on, and a connection that never healed
+
+The batch-anchoring branch is merged into `main`.
+It overlapped with the week's watcher work (block-based expiry, the doubling timestamp search, fork handling, the funds pause), which all merged cleanly; three documentation and import conflicts were resolved by hand, and the merged tree passes 129 unit and 55 database tests.
+On the live server, migrations `0006` and `0007` created the three batch tables in the hosted database, `RECEIPT_BATCH_REGISTRY_ADDRESS` was set for the watcher and the web app, and both were restarted.
+The watcher now logs batch anchoring as on: contract `0x0a4e4bef…dbd5ae5e`, a batch at 20 waiting receipts or 30 minutes, at most 256 per batch.
+No batch has been written on V3 yet; the first one follows the next settled transfer.
+
+The restart also cleared a stall nobody had noticed.
+The watcher's scan cursor had sat at block #232121 for about 13 hours: every pass failed with "disconnected (1006)" on block reads, although the same blocks read in under half a second on a fresh connection, and the polkadot.js provider kept reporting reconnects.
+The new process caught up to the head in its first pass and expired the stale 80 tPOT intent.
+The watcher now exits after 12 passes in a row that fail without moving the scan, so PM2 starts a fresh process instead of waiting for someone to notice.
+
+Deploying the web build twice over an unreliable connection showed that copying straight into the live `.next` folder breaks pages while the copy runs, because `rsync --delete` removes old files first.
+The README now describes copying into a staging folder and swapping it in with one rename.
