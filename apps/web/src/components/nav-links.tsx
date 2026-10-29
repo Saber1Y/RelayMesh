@@ -7,6 +7,7 @@ const LINKS = [
   { href: "/#how", label: "How it works", match: (p: string) => p === "/" },
   { href: "/desk", label: "Desk", match: (p: string) => p.startsWith("/desk") || p.startsWith("/intents") },
   { href: "/verify", label: "Verify", match: (p: string) => p.startsWith("/verify") },
+  { href: "/bridge", label: "Bridge", match: (p: string) => p.startsWith("/bridge") },
 ] as const;
 
 /** Section links with the current area marked, so users always know where they are. */
