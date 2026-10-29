@@ -188,7 +188,7 @@ flowchart TB
         Sub[Substrate RPC]
         EVM[EVM RPC 420420777]
         Reg[IntentRegistry<br/>0xfcfc...5123]
-        Batch[ReceiptBatchRegistry<br/>not deployed yet]
+        Batch[ReceiptBatchRegistry<br/>0x0a4e...ae5e]
     end
     UI --> API
     Wallet -->|signed extrinsic| Sub
@@ -285,7 +285,7 @@ The full diagrams, including the state machine and a sequence diagram, are in [d
 **Writes**
 
 - The user's wallet submits `balances.transferKeepAlive` from a Substrate account to the account that controls the target EVM address.
-- The watcher's relayer calls `ReceiptBatchRegistry.recordBatch` once per batch of settled receipts (the contract is built and simulated on V3, not deployed yet).
+- The watcher's relayer calls `ReceiptBatchRegistry.recordBatch` once per batch of settled receipts, on the deployed contract `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e`.
 - Until batching, it called `IntentRegistry.recordIntent` and `recordReceipt` on `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` after each settlement; those four receipts stay anchored there.
 
 The route uses Revive's account mapping: an EVM address is controlled by its mapped native account or by its fallback account `h160 ++ 0xEE * 12`, and `eth_getBalance` reports that account's reducible balance times 10^4.
@@ -329,7 +329,7 @@ Those blocks are located from on-chain block timestamps, read from each block's 
 | Historical `eth_getBalance` delta measurement | Real - measured 0 to 0.9 tPOT across block #122911 for a live transfer |
 | A signed tPOT transfer settled end to end | Real - two transfers settled, in blocks #122911 and #136917 ([evidence](docs/evidence.md)) |
 | `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; four settled receipts anchored and re-checked against the contract |
-| `ReceiptBatchRegistry` batch anchoring | Built, not deployed - behaviour checked inside an `eth_call` on V3, costs simulated there, and run end to end against a local anvil chain; deploying needs about 82 tPOT |
+| `ReceiptBatchRegistry` batch anchoring | Deployed at `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` (block #238209); behaviour checked inside an `eth_call` on V3 and run end to end against a local anvil chain. No batch written on V3 yet |
 | iBridge cross-chain route | Not yet established - no public interface from PortalDot |
 | Hosted deployment | Real - web app and watcher on an always-on server behind Caddy, Postgres on Render, serving the same settled transfers and receipts |
 
@@ -394,7 +394,7 @@ pnpm compile
 pnpm simulate-deploy  # read-only check against V3
 pnpm simulate:batch-registry  # read-only: behaviour checks and costs on V3
 pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
-pnpm deploy:batch-registry  # about 82 tPOT; recorder = BATCH_RECORDER_ADDRESS or the deployer
+pnpm deploy:batch-registry  # about 81 tPOT; recorder = BATCH_RECORDER_ADDRESS or the deployer
 ```
 
 ## The one-flow demo

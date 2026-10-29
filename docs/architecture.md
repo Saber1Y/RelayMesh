@@ -28,7 +28,7 @@ flowchart TB
         Sub[Substrate RPC<br/>wss://test-node-v3.portaldot.dev]
         EVM[EVM JSON-RPC, chain 420420777<br/>https://test-evm-rpc-v3.portaldot.dev]
         Reg[IntentRegistry contract<br/>0xfcfc36e3ea951640d1e495a1e671d66c75eb5123<br/>per-intent anchors, before batching]
-        Batch[ReceiptBatchRegistry contract<br/>one Merkle root per batch<br/>not deployed yet]
+        Batch[ReceiptBatchRegistry contract<br/>0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e<br/>one Merkle root per batch]
     end
 
     UI -->|create intent, quote,<br/>select route, report inclusion| API
@@ -180,5 +180,6 @@ The contract stores one slot per batch (recorded time, block number, leaf count)
   If the watcher is down for more than about 25 minutes after a transfer, the balance delta can no longer be measured and the intent is flagged for review.
 - Two signed transfers have settled end to end so far (blocks #122911 and #136917, see [evidence.md](evidence.md)); broader testing is still to come.
 - `IntentRegistry` is deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` with a single recorder, the RelayMesh relayer key, and holds the four receipts anchored before batching.
-- `ReceiptBatchRegistry` is not deployed yet (about 82 tPOT); until it is, the watcher settles transfers with anchoring off.
+- `ReceiptBatchRegistry` is deployed at `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` (block #238209) with the same recorder.
+  A watcher without `RECEIPT_BATCH_REGISTRY_ADDRESS` settles transfers with anchoring off.
   Anchoring pauses if the relayer runs out of tPOT; settlement does not depend on it.

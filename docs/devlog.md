@@ -380,3 +380,10 @@ What was verified, and how:
 
 `ReceiptBatchRegistry` is not deployed on V3 yet.
 Deploying it costs about 82 tPOT and waits for approval.
+
+### Later the same day: the batch registry is deployed
+
+`ReceiptBatchRegistry` is deployed at `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` (tx `0x773bee33…`, block #238209), with the relayer as its only recorder.
+It cost 80.38 tPOT against an estimate of 81.64 tPOT, and the deploy script confirmed the on-chain code and recorder.
+The relayer kept 9.02 tPOT, enough for one batch write at the watcher's 25% safety margin, and for a second one only just.
+No batch has been written on V3 yet: the watcher needs this branch, the two new migrations and `RECEIPT_BATCH_REGISTRY_ADDRESS` first.
