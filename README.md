@@ -167,6 +167,13 @@ A batch is written when 20 receipts are waiting or the oldest has waited 30 minu
 - Each batch is stored with every leaf and proof before its root is sent, so a crash before or after mining resumes with the same root, read back from the contract.
 - The four receipts already in `IntentRegistry` are never re-batched and still verify there.
 
+### Checks for the live PortalDot bridge
+
+The **Bridge** page ([/bridge](https://relaymesh.162-62-231-147.sslip.io/bridge)) checks real transfers through PortalDot's bridge (bridge.portaldot.dev), which takes POT on Portaldot mainnet and pays WPOT on BSC.
+Given a deposit's explorer ID, RelayMesh reads the deposit from the Portaldot mainnet node (finalized, successful, into the bridge's deposit address) and searches BSC for the payout: a WPOT transfer from the bridge's reserve, after the deposit, of exactly the deposit less the bridge's 3% fee, in a finalized block, and to the user's BSC address when one is given.
+The bridge's own API is never asked.
+The bridge does not link its two transactions on chain, so the payout is matched by exact amount, order and optional recipient, and the page says so; a proven deposit with no payout yet is reported as pending, since the bridge pays out in batches hours later.
+
 ## Architecture
 
 Two decisions shape everything else.
@@ -330,7 +337,8 @@ Those blocks are located from on-chain block timestamps, read from each block's 
 | A signed tPOT transfer settled end to end | Real - two transfers settled, in blocks #122911 and #136917 ([evidence](docs/evidence.md)) |
 | `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; four settled receipts anchored and re-checked against the contract |
 | `ReceiptBatchRegistry` batch anchoring | Deployed at `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` (block #238209); behaviour checked inside an `eth_call` on V3 and run end to end against a local anvil chain. No batch written on V3 yet |
-| iBridge cross-chain route | Not yet established - no public interface from PortalDot |
+| iBridge cross-chain route | Not yet established - no public interface from PortalDot; confirmed closed to third parties through demo day |
+| Checking live PortalDot bridge transfers (POT to BSC) | Real - read-only, verified a 33 POT deposit against its 32.01 WPOT payout on BSC |
 | Hosted deployment | Real - web app and watcher on an always-on server behind Caddy, Postgres on Render, serving the same settled transfers and receipts |
 
 The core flow is proven on chain: real signed transfers were quoted, verified, finalized, measured, receipted and anchored in `IntentRegistry` (see [docs/evidence.md](docs/evidence.md)).
@@ -457,6 +465,7 @@ The Blueprint also defines a free Render web service, which serves the same app 
 
 The app is built where memory is plentiful and only the build output is copied to the server, because `next build` needs far more memory than serving does.
 On the server, `pm2 start apps/web/ecosystem.config.cjs` serves it on `127.0.0.1:3200`, and Caddy terminates TLS in front of it.
+Copy the whole build before restarting, and check that the server's `.next/static`, `.next/server` and `.next/build` file lists match the local ones: a partly copied build breaks every page, and Next.js does not serve static files that arrive after it starts.
 It uses about 255 MB.
 Any other Node.js host that runs `next build` and `next start --port $PORT` works too.
 

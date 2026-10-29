@@ -1,8 +1,8 @@
-import { desc, sql } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import type { Hex } from "viem";
 import { INTENT_STATUSES, isChainId, type ChainId, type IntentStatus } from "@relaymesh/core";
 import type { Db } from "./client";
-import { intents } from "./schema";
+import { intents, registryAnchors } from "./schema";
 
 // Read-only summaries for dashboards. They read the status projection for speed; anything shown as
 // evidence must still come from loadIntent, which replays and verifies the full history.
@@ -63,4 +63,10 @@ export async function recentSettlementSeconds(db: Db, limit = 20): Promise<numbe
     LIMIT ${limit}
   `);
   return [...result].map((r) => Number(r.seconds));
+}
+
+/** Receipts whose hash RelayMesh has written to IntentRegistry, as recorded after each write was mined. */
+export async function countAnchoredReceipts(db: Db): Promise<number> {
+  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(registryAnchors).where(eq(registryAnchors.step, "receipt"));
+  return row?.count ?? 0;
 }

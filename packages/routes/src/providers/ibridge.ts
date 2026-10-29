@@ -4,8 +4,8 @@ import type { ExecutionPlan, ProviderStatus, QuoteResult, RouteProvider } from "
 export const IBRIDGE_PROVIDER_ID = "portaldot-ibridge";
 
 const UNAVAILABLE_REASON =
-  "PortalDot has not published an iBridge SDK, API or contract interface, and the V3 testnet runtime has no bridge pallet. " +
-  "This slot will be implemented once PortalDot ships a programmatic interface.";
+  "PortalDot has confirmed iBridge stays closed to third parties through demo day, and the V3 testnet runtime has no bridge pallet. " +
+  "This slot will be implemented once PortalDot opens a programmatic interface; transfers through PortalDot's public bridge can already be checked on the Bridge page.";
 
 /**
  * Placeholder for PortalDot's iBridge. It is listed so the UI can show the route honestly as
@@ -17,7 +17,7 @@ export class IBridgeProvider implements RouteProvider {
   readonly description = "Cross-chain transfers between PortalDot and EVM networks. Awaiting a public interface from PortalDot.";
 
   status(): ProviderStatus {
-    return { available: false, reason: UNAVAILABLE_REASON, checkedOn: "2026-10-20" };
+    return { available: false, reason: UNAVAILABLE_REASON, checkedOn: "2026-10-24" };
   }
 
   supports(): boolean {

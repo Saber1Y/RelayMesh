@@ -12,6 +12,7 @@
     "spike:mapping": "tsx --env-file-if-exists=../../.env scripts/spike-mapping.ts"
   },
   "dependencies": {
+    "@relaymesh/core": "workspace:*",
     "@polkadot/api": "^17.0.2",
     "@polkadot/api-augment": "^17.0.2",
     "@polkadot/util": "^14.0.3",
