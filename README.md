@@ -334,8 +334,8 @@ Those blocks are located from on-chain block timestamps, read from each block's 
 | Server-side verification of reported transactions | Real - rejection paths verified live against real blocks |
 | Watcher finality, scanning and expiry | Real - ran against live V3; expired stale intents correctly |
 | Historical `eth_getBalance` delta measurement | Real - measured 0 to 0.9 tPOT across block #122911 for a live transfer |
-| A signed tPOT transfer settled end to end | Real - four transfers settled, in blocks #122911, #136917, #172163 and #232117 ([evidence](docs/evidence.md)) |
-| `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; four settled receipts anchored and re-checked against the contract |
+| A signed tPOT transfer settled end to end | Real - five transfers settled, in blocks #122911, #136917, #172163, #232117 and #238153 ([evidence](docs/evidence.md)) |
+| `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; five settled receipts anchored and re-checked against the contract |
 | `ReceiptBatchRegistry` batch anchoring | Deployed at `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` (block #238209); behaviour checked inside an `eth_call` on V3 and run end to end against a local anvil chain. No batch written on V3 yet |
 | iBridge cross-chain route | Not yet established - no public interface from PortalDot; confirmed closed to third parties through demo day |
 | Checking live PortalDot bridge transfers (POT to BSC) | Real - read-only, verified a 33 POT deposit against its 32.01 WPOT payout on BSC |
