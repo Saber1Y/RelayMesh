@@ -59,16 +59,33 @@ const ctx = {
   },
 };
 
+// A node connection can go bad in a way auto-reconnect does not cure: every block read fails with
+// "disconnected (1006)" while a fresh connection works (seen on V3 on 2026-10-29, for 13 hours).
+// After this many passes in a row that fail without moving the scan, exit so PM2 starts a fresh process.
+const STALLED_PASSES_BEFORE_RESTART = 12;
+let stalledPasses = 0;
+let lastScannedTo: bigint | null = null;
+
 while (!stopping) {
   const started = Date.now();
   let behind = false;
+  let stalled: boolean;
   try {
     const summary = await runPass(ctx);
     behind = !summary.caughtUp && summary.errors === 0;
+    stalled = summary.errors > 0 && !summary.caughtUp && summary.scannedTo === lastScannedTo;
+    lastScannedTo = summary.scannedTo;
     const changed = summary.found + summary.confirmed + summary.settled + summary.flagged + summary.expired + summary.anchored + summary.errors;
     if (changed > 0) log.info("pass", { ...summary, ms: Date.now() - started });
   } catch (error) {
+    stalled = true;
     log.error("pass failed", { error });
+  }
+  stalledPasses = stalled ? stalledPasses + 1 : 0;
+  if (stalledPasses >= STALLED_PASSES_BEFORE_RESTART) {
+    log.error("restarting: passes keep failing without progress", { passes: stalledPasses, scannedTo: lastScannedTo?.toString() ?? null });
+    process.exitCode = 1;
+    break;
   }
   if (stopping) break;
   // A scan that is still behind the finalized head continues immediately.
