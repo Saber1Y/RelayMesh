@@ -19,6 +19,7 @@ const STATUS: Record<RelayMeshErrorCode, number> = {
   QUOTE_MISMATCH: 409,
   IDEMPOTENCY_CONFLICT: 409,
   INTEGRITY_ERROR: 500,
+  INVALID_BATCH: 500,
 };
 
 /** JSON with bigint as decimal strings; the browser never sees a lossy number for an amount. */

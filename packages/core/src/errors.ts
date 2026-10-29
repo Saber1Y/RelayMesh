@@ -14,7 +14,8 @@ export type RelayMeshErrorCode =
   | "CONSTRAINT_VIOLATION"
   | "IDEMPOTENCY_KEY_INVALID"
   | "IDEMPOTENCY_CONFLICT"
-  | "INTEGRITY_ERROR";
+  | "INTEGRITY_ERROR"
+  | "INVALID_BATCH";
 
 export class RelayMeshError extends Error {
   readonly code: RelayMeshErrorCode;
