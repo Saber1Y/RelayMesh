@@ -181,8 +181,10 @@ export const watcherCursors = pgTable(
 );
 
 /**
- * IntentRegistry writes confirmed on chain. Rows are only inserted after the transaction is mined
- * and the contract state was read back, so a row is itself evidence. Append-only.
+ * IntentRegistry writes confirmed on chain, from per-intent anchoring before receipt batches replaced
+ * it. Rows are only inserted after the transaction is mined and the contract state was read back, so
+ * a row is itself evidence. No longer written by the watcher; kept so those receipts stay verifiable
+ * and are never anchored twice. Append-only.
  */
 export const registryAnchors = pgTable(
   "registry_anchors",

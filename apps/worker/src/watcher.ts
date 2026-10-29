@@ -1,24 +1,27 @@
 import { u8aEq } from "@polkadot/util";
 import { decodeAddress } from "@polkadot/util-crypto";
-import { keccak256, stringToBytes, type Hex } from "viem";
+import type { Hex } from "viem";
 import type { BlockRef, V3ChainReader } from "@relaymesh/chains";
-import { assessSettlement, buildReceipt, hashReceipt, type Evidence, type Quote, type StatusEvent } from "@relaymesh/core";
+import { assessSettlement, batchLeaf, buildMerkleTree, buildReceipt, hashReceipt, merkleProof, type Evidence, type Quote, type StatusEvent } from "@relaymesh/core";
 import {
   advanceCursor,
   appendStatusEvent,
   getCursor,
-  listAnchors,
   listExecutionPlans,
   listIntentIdsByStatus,
+  listPendingReceiptAnchors,
   listQuotes,
-  listSettledWithoutReceiptAnchor,
+  listUnconfirmedReceiptBatches,
   loadIntent,
-  recordAnchor,
+  planReceiptBatch,
+  recordReceiptBatchAnchor,
   type Db,
+  type ReceiptBatchLeaf,
   type StoredIntent,
+  type StoredReceiptBatch,
 } from "@relaymesh/db";
 import type { Logger } from "./log";
-import { EVENT_LOOKBACK_BLOCKS, RelayerFundsError, ZERO_ADDRESS, ZERO_HASH, type RegistryClient } from "./registry";
+import { RelayerFundsError, type BatchRegistryClient, type MinedTx } from "./registry";
 
 export const SOURCE_SCAN_CURSOR = "source-scan";
 /** Extra blocks added on both sides of every scan range. */
@@ -42,13 +45,15 @@ const CLOCK_SKEW_SECONDS = 30;
 export interface WatcherContext {
   db: Db;
   chain: V3ChainReader;
-  registry: RegistryClient | null;
+  registry: BatchRegistryClient | null;
   log: Logger;
   now(): number;
   config: {
     scanBackfillBlocks: number;
     maxBlocksPerPass: number;
     signedTxLifetimeSeconds: number;
+    /** When to write a receipt batch: `size` receipts waiting, or the oldest waiting `maxWaitSeconds`. */
+    batching: { size: number; maxWaitSeconds: number; maxLeaves: number };
     /** Base delay between retries of a failed block read; doubles each attempt. Defaults to 1000ms. */
     rpcRetryDelayMs?: number;
   };
@@ -63,6 +68,7 @@ export interface PassSummary {
   settled: number;
   flagged: number;
   expired: number;
+  /** Receipts anchored this pass, counted per intent, not per batch. */
   anchored: number;
   errors: number;
 }
@@ -536,66 +542,82 @@ async function expireStale(ctx: WatcherContext, finalized: BlockRef, summary: Pa
 }
 
 // When anchoring paused for lack of relayer funds, per registry: unix seconds to try again.
-const anchoringPausedUntil = new WeakMap<RegistryClient, number>();
+const anchoringPausedUntil = new WeakMap<BatchRegistryClient, number>();
 
-/** Writes intent and receipt hashes of settled intents to IntentRegistry, recovering from partial earlier attempts. */
+/**
+ * Anchors settled receipts in ReceiptBatchRegistry, one Merkle root per batch. A batch is stored with
+ * every leaf and proof before its root is sent, so after a crash the exact root is read back from the
+ * contract instead of being rebuilt from a set of waiting receipts that may have changed meanwhile.
+ */
 async function anchorReceipts(ctx: WatcherContext, summary: PassSummary): Promise<void> {
   const registry = ctx.registry;
   if (!registry) return;
-  const ids = await listSettledWithoutReceiptAnchor(ctx.db);
-  summary.errors += await eachIntent(ctx, ids, "anchor receipt", async (intentId) => {
-    // An unfunded relayer is an operator task, not an intent failure: say so once, then wait for
-    // funds instead of retrying a write that cannot succeed every pass. Settlement is unaffected.
-    if (ctx.now() < (anchoringPausedUntil.get(registry) ?? 0)) return;
-    try {
-      await anchorOne(ctx, registry, intentId, summary);
-    } catch (error) {
-      if (!(error instanceof RelayerFundsError)) throw error;
-      anchoringPausedUntil.set(registry, ctx.now() + ANCHOR_FUNDS_RETRY_SECONDS);
-      ctx.log.warn("relayer needs funding; anchoring paused", {
-        relayer: error.account,
-        balance: error.balance.toString(),
-        needed: error.needed.toString(),
-        retryInSeconds: ANCHOR_FUNDS_RETRY_SECONDS,
-        waiting: ids.length,
-      });
+  // An unfunded relayer is an operator task, not an intent failure: say so once, then wait for
+  // funds instead of retrying a write that cannot succeed every pass. Settlement is unaffected.
+  if (ctx.now() < (anchoringPausedUntil.get(registry) ?? 0)) return;
+  const { size, maxWaitSeconds, maxLeaves } = ctx.config.batching;
+  let waiting = 0;
+  try {
+    // Finish planned batches first: one sent before a crash, or one whose write failed.
+    for (const batch of await listUnconfirmedReceiptBatches(ctx.db, registry.address)) await confirmBatch(ctx, registry, batch, summary);
+
+    const pending = await listPendingReceiptAnchors(ctx.db, registry.address, maxLeaves);
+    waiting = pending.length;
+    const oldest = pending[0];
+    if (!oldest || (pending.length < size && ctx.now() - oldest.settledAt < maxWaitSeconds)) return;
+
+    const leaves: Omit<ReceiptBatchLeaf, "proof">[] = [];
+    summary.errors += await eachIntent(
+      ctx,
+      pending.map((p) => p.intentId),
+      "hash receipt for anchoring",
+      async (intentId) => {
+        const stored = await loadIntent(ctx.db, intentId);
+        const quote = stored && (await selectedQuote(ctx, stored));
+        if (!stored || !quote) throw new Error("Settled intent without a selected quote");
+        const receiptHash = hashReceipt(buildReceipt({ intent: stored.intent, intentHash: stored.intentHash, quote, history: stored.history }));
+        leaves.push({ intentId, intentHash: stored.intentHash, receiptHash, leafHash: batchLeaf(stored.intentHash, receiptHash) });
+      },
+    );
+    if (leaves.length === 0) return;
+    const tree = buildMerkleTree(leaves.map((l) => l.leafHash));
+    const batch = { contractAddress: registry.address, chainId: registry.chainId, root: tree.root, leafCount: leaves.length, createdAt: ctx.now() };
+    await planReceiptBatch(ctx.db, { ...batch, leaves: leaves.map((l) => ({ ...l, proof: merkleProof(tree, l.leafHash) })) });
+    await confirmBatch(ctx, registry, batch, summary);
+  } catch (error) {
+    if (!(error instanceof RelayerFundsError)) {
+      summary.errors++;
+      ctx.log.error("anchor receipts failed", { error });
+      return;
     }
-  });
+    anchoringPausedUntil.set(registry, ctx.now() + ANCHOR_FUNDS_RETRY_SECONDS);
+    ctx.log.warn("relayer needs funding; anchoring paused", {
+      relayer: error.account,
+      balance: error.balance.toString(),
+      needed: error.needed.toString(),
+      retryInSeconds: ANCHOR_FUNDS_RETRY_SECONDS,
+      waiting,
+    });
+  }
 }
 
-/** Anchors one settled intent: its intent hash if not yet recorded, then its receipt hash. */
-async function anchorOne(ctx: WatcherContext, registry: RegistryClient, intentId: Hex, summary: PassSummary): Promise<void> {
-  const stored = await loadIntent(ctx.db, intentId);
-  const quote = stored && (await selectedQuote(ctx, stored));
-  if (!stored || !quote) throw new Error("Settled intent without a selected quote");
-  const receiptHash = hashReceipt(buildReceipt({ intent: stored.intent, intentHash: stored.intentHash, quote, history: stored.history }));
-  const routeId = keccak256(stringToBytes(quote.routeId));
-  const anchors = await listAnchors(ctx.db, intentId);
-  const anchorBase = { intentId, contractAddress: registry.address, chainId: registry.chainId };
-
-  const state = await registry.read(stored.intentHash);
-  if (state.recorder !== ZERO_ADDRESS && state.recorder !== registry.recorder) {
-    throw new Error(`Intent hash is already recorded by ${state.recorder}, not this relayer`);
+/** Gets a planned batch's root on chain, or finds the transaction that already put it there, and records it. */
+async function confirmBatch(ctx: WatcherContext, registry: BatchRegistryClient, batch: StoredReceiptBatch, summary: PassSummary): Promise<void> {
+  const onChain = await registry.getBatch(batch.root);
+  let tx: MinedTx | null;
+  if (!onChain) {
+    tx = await registry.recordBatch(batch.root, batch.leafCount);
+  } else {
+    // Only the configured recorder can write, so a recorded root is this relayer's earlier write.
+    if (onChain.leafCount !== batch.leafCount) {
+      throw new Error(`Registry holds batch ${batch.root} with ${onChain.leafCount} leaves, but the stored plan has ${batch.leafCount}`);
+    }
+    tx = await registry.findBatchEvent(batch.root, onChain.blockNumber);
+    if (!tx) throw new Error(`Registry holds batch ${batch.root} but no BatchRecorded event was found in block ${onChain.blockNumber}`);
   }
-  if (state.receiptHash !== ZERO_HASH && state.receiptHash !== receiptHash) {
-    throw new Error(`Registry holds receipt ${state.receiptHash}, but the stored history hashes to ${receiptHash}`);
-  }
-
-  const recover = async (kind: "IntentRecorded" | "ReceiptRecorded") => {
-    const fromBlock = (await ctx.chain.finalizedHead()).number - EVENT_LOOKBACK_BLOCKS;
-    const tx = await registry.findEvent(kind, stored.intentHash, fromBlock > 0n ? fromBlock : 0n);
-    if (!tx) throw new Error(`Registry state shows ${kind} but no event was found in the last ${EVENT_LOOKBACK_BLOCKS} blocks`);
-    return tx;
-  };
-
-  if (!anchors.some((a) => a.step === "intent")) {
-    const tx = state.recorder === ZERO_ADDRESS ? await registry.recordIntent(stored.intentHash, routeId) : await recover("IntentRecorded");
-    await recordAnchor(ctx.db, { ...anchorBase, step: "intent", valueHash: stored.intentHash, ...tx });
-  }
-  const tx = state.receiptHash === ZERO_HASH ? await registry.recordReceipt(stored.intentHash, receiptHash) : await recover("ReceiptRecorded");
-  await recordAnchor(ctx.db, { ...anchorBase, step: "receipt", valueHash: receiptHash, ...tx });
-  summary.anchored++;
-  ctx.log.info("receipt anchored", { intentId, receiptHash, txHash: tx.txHash });
+  await recordReceiptBatchAnchor(ctx.db, { contractAddress: registry.address, root: batch.root, ...tx });
+  summary.anchored += batch.leafCount;
+  ctx.log.info("receipt batch anchored", { root: batch.root, receipts: batch.leafCount, txHash: tx.txHash, recovered: onChain !== null });
 }
 
 /** One watcher pass. Each stage reads fresh state, so passes are idempotent and safe to re-run after a crash. */
