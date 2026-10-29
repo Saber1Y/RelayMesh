@@ -347,3 +347,27 @@ The node came back short of peers and slow, and that stopped the watcher from se
 
 With both fixes deployed, the watcher found the transfer in block #232117, measured exactly 90 tPOT arriving at the relayer's EVM address, settled it, and anchored its intent (#235751) and receipt (#235753, tx `0xdf66f298…`).
 That makes four settled transfers on V3, all with receipts anchored in `IntentRegistry`.
+
+## 2026-10-29: Checking real PortalDot bridge transfers
+
+PortalDot confirmed iBridge stays closed to third parties through demo day, but its public bridge (bridge.portaldot.dev) already moves POT from Portaldot mainnet to WPOT on BSC.
+Read-only, the traffic is clear: the deposit address on Portaldot had received 565 transfers, and the bridge's BSC reserve had sent 474 payouts from a fixed 300,000,000 WPOT supply.
+The amounts show the bridge's published 3% fee: 1 POT pays 0.97 WPOT, 33 POT pays 32.01.
+
+The new **Bridge** page checks one transfer from the chains alone.
+The deposit is read from the Portaldot mainnet node: the extrinsic at the given block and index must be a successful, finalized balances transfer into the bridge's deposit address.
+Then BSC is searched, in 50,000-block steps (the public node's limit), for a WPOT transfer from the bridge's reserve of exactly the deposit less the fee, made after the deposit and in a finalized block, to the user's BSC address when they give one.
+
+Two things from real data shaped it:
+
+- The first attempt matched a 6 POT deposit to a 5.82 WPOT payout that had happened eight hours before the deposit.
+  Equal amounts are common, so only payouts after the deposit count, and the earliest wins.
+- The bridge pays out in batches, often hours later; the 33 POT deposit was paid 11 hours 30 minutes after it landed.
+  A proven deposit without a payout is reported as pending, not failed.
+
+The bridge does not link its two transactions on chain, so the page states that the payout is matched by exact amount, order and optional recipient.
+Recent deposits are listed from PortalDot's explorer only as examples; every check reads both chains itself.
+Live, the page verified deposit `832820-1` (33 POT) against BSC transaction `0xff150567…899d8534` (32.01 WPOT), and reported `844578-1` (6 POT, a few hours old) as pending.
+
+Deploying it also showed a hazard in copying builds over an unreliable connection: a half-copied build broke every page, and files that arrive after the server starts are not served until it restarts.
+Each deploy now ends by comparing the file lists on both sides before restarting.
