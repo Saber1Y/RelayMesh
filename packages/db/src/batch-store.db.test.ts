@@ -10,8 +10,10 @@ import {
   type ReceiptBatchLeaf,
   type ReceiptBatchPlan,
 } from "./batch-store";
+import { countAnchoredReceipts } from "./activity-store";
 import { connectDb } from "./client";
 import { insertIntent } from "./store";
+import { recordAnchor } from "./watcher-store";
 
 const { db, close } = connectDb(process.env.TEST_DATABASE_URL as string, { max: 4 });
 afterAll(() => close());
@@ -116,6 +118,24 @@ describe("receipt batches", () => {
     expect(await listUnconfirmedReceiptBatches(db, CONTRACT)).toHaveLength(1);
     await planReceiptBatch(db, { ...alone, contractAddress: OTHER_CONTRACT });
     expect(await listUnconfirmedReceiptBatches(db, OTHER_CONTRACT)).toHaveLength(1);
+  });
+
+  it("counts receipts anchored one by one and in mined batches, each intent once", async () => {
+    const plan = await batchOf(3);
+    await planReceiptBatch(db, plan);
+    expect(await countAnchoredReceipts(db)).toBe(0); // planned, not mined
+    await recordReceiptBatchAnchor(db, { contractAddress: CONTRACT, root: plan.root, txHash: TX, blockNumber: 1n });
+    expect(await countAnchoredReceipts(db)).toBe(3);
+
+    // An intent anchored in IntentRegistry before batching counts once, even if a batch also holds it.
+    const leaf = plan.leaves[0] as ReceiptBatchLeaf;
+    const anchor = { contractAddress: OTHER_CONTRACT, chainId: 420420777, txHash: TX, blockNumber: 1n };
+    await recordAnchor(db, { ...anchor, intentId: leaf.intentId, step: "receipt", valueHash: leaf.receiptHash });
+    const { intent, intentHash } = await newIntent(99);
+    await recordAnchor(db, { ...anchor, intentId: intent.intentId, step: "intent", valueHash: intentHash });
+    expect(await countAnchoredReceipts(db)).toBe(3);
+    await recordAnchor(db, { ...anchor, intentId: intent.intentId, step: "receipt", valueHash: leaf.receiptHash });
+    expect(await countAnchoredReceipts(db)).toBe(4);
   });
 
   it("is append-only", async () => {

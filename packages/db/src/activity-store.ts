@@ -1,8 +1,8 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { desc, sql } from "drizzle-orm";
 import type { Hex } from "viem";
 import { INTENT_STATUSES, isChainId, type ChainId, type IntentStatus } from "@relaymesh/core";
 import type { Db } from "./client";
-import { intents, registryAnchors } from "./schema";
+import { intents, receiptBatchAnchors, receiptBatchLeaves, registryAnchors } from "./schema";
 
 // Read-only summaries for dashboards. They read the status projection for speed; anything shown as
 // evidence must still come from loadIntent, which replays and verifies the full history.
@@ -65,8 +65,18 @@ export async function recentSettlementSeconds(db: Db, limit = 20): Promise<numbe
   return [...result].map((r) => Number(r.seconds));
 }
 
-/** Receipts whose hash RelayMesh has written to IntentRegistry, as recorded after each write was mined. */
+/**
+ * Intents whose receipt is anchored on chain, as recorded after each write was mined: one by one in
+ * IntentRegistry (before batching), or as a leaf of a mined ReceiptBatchRegistry batch.
+ */
 export async function countAnchoredReceipts(db: Db): Promise<number> {
-  const [row] = await db.select({ count: sql<number>`count(*)::int` }).from(registryAnchors).where(eq(registryAnchors.step, "receipt"));
-  return row?.count ?? 0;
+  const [row] = await db.execute<{ count: number }>(sql`
+    SELECT count(*)::int AS count FROM (
+      SELECT ${registryAnchors.intentId} AS intent_id FROM ${registryAnchors} WHERE ${registryAnchors.step} = 'receipt'
+      UNION
+      SELECT ${receiptBatchLeaves.intentId} FROM ${receiptBatchLeaves}
+      JOIN ${receiptBatchAnchors} ON ${receiptBatchAnchors.contractAddress} = ${receiptBatchLeaves.contractAddress} AND ${receiptBatchAnchors.root} = ${receiptBatchLeaves.batchRoot}
+    ) anchored
+  `);
+  return Number(row?.count ?? 0);
 }
