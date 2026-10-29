@@ -89,6 +89,6 @@ console.log(
 );
 console.log(
   name === "ReceiptBatchRegistry"
-    ? "Record these values in docs/evidence.md, then set RECEIPT_BATCH_REGISTRY_ADDRESS and RECEIPT_BATCH_REGISTRY_DEPLOY_BLOCK for the worker and the web app."
+    ? "Record these values in docs/evidence.md, then set RECEIPT_BATCH_REGISTRY_ADDRESS for the worker and the web app."
     : "Record these values in docs/evidence.md and set INTENT_REGISTRY_ADDRESS for the web app's receipt checker.",
 );
