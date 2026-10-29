@@ -430,6 +430,7 @@ The Blueprint also defines a free Render web service, which serves the same app 
 
 The app is built where memory is plentiful and only the build output is copied to the server, because `next build` needs far more memory than serving does.
 On the server, `pm2 start apps/web/ecosystem.config.cjs` serves it on `127.0.0.1:3200`, and Caddy terminates TLS in front of it.
+Copy the whole build before restarting, and check that the server's `.next/static`, `.next/server` and `.next/build` file lists match the local ones: a partly copied build breaks every page, and Next.js does not serve static files that arrive after it starts.
 It uses about 255 MB.
 Any other Node.js host that runs `next build` and `next start --port $PORT` works too.
 

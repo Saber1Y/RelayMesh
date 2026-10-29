@@ -370,4 +370,4 @@ Recent deposits are listed from PortalDot's explorer only as examples; every che
 Live, the page verified deposit `832820-1` (33 POT) against BSC transaction `0xff150567…899d8534` (32.01 WPOT), and reported `844578-1` (6 POT, a few hours old) as pending.
 
 Deploying it also showed a hazard in copying builds over an unreliable connection: a half-copied build broke every page, and files that arrive after the server starts are not served until it restarts.
-Each deploy now ends by comparing the file lists on both sides before restarting.
+The README's deploy steps now say to compare the file lists on both sides before restarting.
