@@ -135,16 +135,25 @@ export function mergeRanges(ranges: { start: bigint; end: bigint }[]): { start: 
 
 /**
  * First block whose timestamp is at or after `t`, or `head + 1` if none is yet. Block times only
- * increase, so this interpolates on timestamps (blocks are regular, so a guess lands close) and falls
- * back to bisection whenever a guess fails to halve the interval, which bounds the reads to O(log n).
+ * increase. The lower bound is found by stepping back from the head in doubling strides, so a recent
+ * time (the usual case: a pending plan) never reads far back; old blocks can be slow or unavailable on
+ * a public node. Then it interpolates on timestamps (blocks are regular, so a guess lands close) and
+ * falls back to bisection whenever a guess fails to halve the interval, keeping the reads O(log n).
  */
 export async function firstBlockAtOrAfter(t: number, head: bigint, timeOf: (n: bigint) => Promise<number>): Promise<bigint> {
   let hi = head;
   let tHi = await timeOf(hi);
   if (tHi < t) return head + 1n;
-  // Block 0 (genesis) carries no timestamp, so the search starts at block 1.
-  let lo = 1n;
+  // Block 0 (genesis) carries no timestamp, so block 1 is the floor.
+  let stride = 64n;
+  let lo = hi > stride ? hi - stride : 1n;
   let tLo = await timeOf(lo);
+  while (tLo >= t && lo > 1n) {
+    [hi, tHi] = [lo, tLo];
+    stride *= 2n;
+    lo = hi > stride ? hi - stride : 1n;
+    tLo = await timeOf(lo);
+  }
   if (tLo >= t || hi <= lo) return lo;
   // Invariant: timeOf(lo) < t <= timeOf(hi).
   let bisect = false;

@@ -41,11 +41,12 @@ describe("firstBlockAtOrAfter", () => {
   }
   const regular = (n: bigint) => GENESIS + Number(n) * 6;
 
-  it("finds the exact block on a regular chain with a handful of reads", async () => {
+  it("finds the exact block on a regular chain, even far back, in a bounded number of reads", async () => {
     const c = chain(regular);
     expect(await firstBlockAtOrAfter(GENESIS + 122_911 * 6, 160_000n, c.timeOf)).toBe(122_911n);
     expect(await firstBlockAtOrAfter(GENESIS + 122_911 * 6 - 5, 160_000n, c.timeOf)).toBe(122_911n);
-    expect(c.reads.length).toBeLessThan(12);
+    // Two lookups ~37,000 blocks back: about 11 strides each to get below, then a few to land.
+    expect(c.reads.length).toBeLessThan(40);
   });
 
   it("stays logarithmic when block times are irregular", async () => {
@@ -60,6 +61,13 @@ describe("firstBlockAtOrAfter", () => {
     const c = chain(regular);
     expect(await firstBlockAtOrAfter(GENESIS + 1_000_000, 1_000n, c.timeOf)).toBe(1_001n);
     expect(c.reads).toEqual([1_000n]);
+  });
+
+  it("finds a recent time without reading anywhere near the start of the chain", async () => {
+    const c = chain(regular);
+    expect(await firstBlockAtOrAfter(GENESIS + 231_000 * 6, 235_566n, c.timeOf)).toBe(231_000n);
+    expect(c.reads.every((n) => n > 200_000n)).toBe(true);
+    expect(c.reads.length).toBeLessThan(20);
   });
 
   it("returns block 1 for times before the chain started, never genesis", async () => {

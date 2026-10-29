@@ -43,6 +43,8 @@ class FakeChain implements V3ChainReader {
   prunedBelow = 0n;
   /** Remaining simulated RPC timeouts per block height (Infinity = always fails). */
   failReads = new Map<bigint, number>();
+  /** Heights whose extrinsics were read, i.e. blocks the scanner actually scanned. */
+  scanned = new Set<bigint>();
 
   block(n: bigint): FakeBlock {
     let b = this.blocks.get(n);
@@ -65,7 +67,9 @@ class FakeChain implements V3ChainReader {
     return this.block(n).hash;
   }
   async blockExtrinsics(hash: Hex) {
-    return [...this.blocks.values()].find((b) => b.hash === hash)?.extrinsics ?? [];
+    const entry = [...this.blocks.entries()].find(([, b]) => b.hash === hash);
+    if (entry) this.scanned.add(entry[0]);
+    return entry?.[1].extrinsics ?? [];
   }
   async blockTimestamp(hash: Hex) {
     return [...this.blocks.values()].find((b) => b.hash === hash)?.timestamp ?? 0;
@@ -448,9 +452,9 @@ describe("finalized block scanner", () => {
     clock = NOW + 10_000; // window closed long ago
     chain.finalized = 5_000n;
     // The window ends at the first block at or after NOW + 1 + 1_800 + 30 (block 1_931), plus 10.
-    for (let n = 1_942n; n < 5_000n; n++) chain.failReads.set(n, Infinity); // blocks past the window are never read
     for (let i = 0; i < 200 && !(await runPass(ctx())).caughtUp; i++);
     expect(await getCursor(db, SOURCE_SCAN_CURSOR)).toBe(5_000n);
+    expect([...chain.scanned].filter((n) => n > 1_941n && n < 5_000n)).toEqual([]); // the gap is never scanned
   });
 });
 
