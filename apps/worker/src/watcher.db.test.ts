@@ -167,7 +167,7 @@ function ctx(): WatcherContext {
 }
 
 beforeEach(async () => {
-  await db.execute(sql`TRUNCATE watcher_cursors, registry_anchors, execution_plans, status_events, idempotency_records, quotes, intents`);
+  await db.execute(sql`TRUNCATE receipt_batch_anchors, receipt_batch_leaves, receipt_batches, watcher_cursors, registry_anchors, execution_plans, status_events, idempotency_records, quotes, intents`);
   chain = new FakeChain();
   registry = new FakeRegistry();
   clock = NOW + 30; // after the reported submission at NOW + 5, as in real use

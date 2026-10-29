@@ -207,3 +207,85 @@ export const registryAnchors = pgTable(
     check("registry_anchors_contract_hex", sql`${t.contractAddress} ~ '^0x[0-9a-f]{40}$'`),
   ],
 );
+
+/**
+ * A planned ReceiptBatchRegistry batch: the Merkle root over its leaves, written before the root is
+ * sent, so a crash between mining and recording can be recovered by reading this exact root back
+ * from the chain. A batch is confirmed once it has a receipt_batch_anchors row. Append-only.
+ */
+export const receiptBatches = pgTable(
+  "receipt_batches",
+  {
+    contractAddress: text("contract_address").notNull(),
+    chainId: integer("chain_id").notNull(),
+    root: text("root").notNull(),
+    leafCount: integer("leaf_count").notNull(),
+    /** When the batch was planned, in unix seconds. */
+    createdAt: unixSeconds("created_at").notNull(),
+    insertedAt: insertedAt(),
+  },
+  (t) => [
+    primaryKey({ name: "receipt_batches_pkey", columns: [t.contractAddress, t.root] }),
+    check("receipt_batches_root_hex", hex(t.root, 32)),
+    check("receipt_batches_contract_hex", sql`${t.contractAddress} ~ '^0x[0-9a-f]{40}$'`),
+    check("receipt_batches_leaf_count_positive", sql`${t.leafCount} > 0`),
+  ],
+);
+
+/** One settled intent's leaf in a batch, with the proof from its leaf to the batch root. Append-only. */
+export const receiptBatchLeaves = pgTable(
+  "receipt_batch_leaves",
+  {
+    contractAddress: text("contract_address").notNull(),
+    batchRoot: text("batch_root").notNull(),
+    intentId: text("intent_id")
+      .notNull()
+      .references(() => intents.intentId),
+    intentHash: text("intent_hash").notNull(),
+    receiptHash: text("receipt_hash").notNull(),
+    leafHash: text("leaf_hash").notNull(),
+    /** Sibling hashes from the leaf up to the root (see @relaymesh/core merkle.ts). */
+    proof: jsonb("proof").notNull(),
+    insertedAt: insertedAt(),
+  },
+  (t) => [
+    // An intent is anchored at most once per contract.
+    primaryKey({ name: "receipt_batch_leaves_pkey", columns: [t.contractAddress, t.intentId] }),
+    foreignKey({
+      name: "receipt_batch_leaves_batch_fk",
+      columns: [t.contractAddress, t.batchRoot],
+      foreignColumns: [receiptBatches.contractAddress, receiptBatches.root],
+    }),
+    unique("receipt_batch_leaves_leaf_key").on(t.contractAddress, t.batchRoot, t.leafHash),
+    check("receipt_batch_leaves_intent_hash_hex", hex(t.intentHash, 32)),
+    check("receipt_batch_leaves_receipt_hash_hex", hex(t.receiptHash, 32)),
+    check("receipt_batch_leaves_leaf_hash_hex", hex(t.leafHash, 32)),
+    check("receipt_batch_leaves_proof_array", sql`jsonb_typeof(${t.proof}) = 'array'`),
+    index("receipt_batch_leaves_intent_id_idx").on(t.intentId),
+  ],
+);
+
+/**
+ * The mined recordBatch transaction of a batch. Inserted only after the transaction is mined, or
+ * after the root was read back from the contract and its BatchRecorded event found. Append-only.
+ */
+export const receiptBatchAnchors = pgTable(
+  "receipt_batch_anchors",
+  {
+    contractAddress: text("contract_address").notNull(),
+    root: text("root").notNull(),
+    txHash: text("tx_hash").notNull(),
+    blockNumber: bigint("block_number", { mode: "bigint" }).notNull(),
+    insertedAt: insertedAt(),
+  },
+  (t) => [
+    primaryKey({ name: "receipt_batch_anchors_pkey", columns: [t.contractAddress, t.root] }),
+    foreignKey({
+      name: "receipt_batch_anchors_batch_fk",
+      columns: [t.contractAddress, t.root],
+      foreignColumns: [receiptBatches.contractAddress, receiptBatches.root],
+    }),
+    check("receipt_batch_anchors_tx_hash_hex", hex(t.txHash, 32)),
+    check("receipt_batch_anchors_block_nonnegative", sql`${t.blockNumber} >= 0`),
+  ],
+);

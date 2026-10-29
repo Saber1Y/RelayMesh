@@ -43,6 +43,20 @@
       "when": 1792484179575,
       "tag": "0005_registry_anchors_append_only",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793268754166,
+      "tag": "0006_receipt_batches",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793268755154,
+      "tag": "0007_receipt_batches_append_only",
+      "breakpoints": true
     }
   ]
 }
