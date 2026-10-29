@@ -331,3 +331,19 @@ The fix was deployed at 13:00 UTC, before that intent could expire, and a new te
 The app now says when this happens.
 `/api/network` reports how long ago the latest finalized block was produced, and past 90 seconds the header chip turns amber and reads "Paused" with the duration.
 The signing panel warns that a transfer signed during a stall waits in the queue, and node rejections such as 1014 and 1010 are explained in plain words.
+
+## 2026-10-29: The stall ends; a slow node, and the transfer settles
+
+V3 resumed at block #232116 (02:09:54 UTC), after a stall of 13 hours 24 minutes.
+The 90 tPOT transfer signed during the stall was included at #232117 (02:10:00 UTC).
+Because expiry now counts blocks, its intent was still open, and the relayer's 90 tPOT also let the watcher anchor the 8 tPOT receipt (tx `0x51b3943a…`).
+
+The node came back short of peers and slow, and that stopped the watcher from settling the transfer for six hours:
+
+- Every pass failed while finding the plan's block, because the timestamp search began by reading block #1, which the node no longer answered within 30 seconds.
+  The search now steps back from the head in doubling strides (64, 128, 256, … blocks) to find its lower bound, so a recent time never reads far back.
+- After a restart the watcher could not start at all: the node took 60 seconds to serve the 1.1 MB of chain metadata, and RPC requests timed out at 30.
+  Server connections (watcher and web) now allow two minutes per request.
+
+With both fixes deployed, the watcher found the transfer in block #232117, measured exactly 90 tPOT arriving at the relayer's EVM address, settled it, and anchored its intent (#235751) and receipt (#235753, tx `0xdf66f298…`).
+That makes four settled transfers on V3, all with receipts anchored in `IntentRegistry`.
