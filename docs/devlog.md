@@ -347,3 +347,36 @@ The node came back short of peers and slow, and that stopped the watcher from se
 
 With both fixes deployed, the watcher found the transfer in block #232117, measured exactly 90 tPOT arriving at the relayer's EVM address, settled it, and anchored its intent (#235751) and receipt (#235753, tx `0xdf66f298…`).
 That makes four settled transfers on V3, all with receipts anchored in `IntentRegistry`.
+
+## 2026-10-29: Batch anchoring, built and checked, not deployed yet
+
+Anchoring each settled intent took two `IntentRegistry` writes of about 11.5 tPOT each, almost all of it Revive's storage deposit, and that is what drained the relayer.
+At about 23 tPOT per transfer, anchoring would not scale past a handful of transfers a day.
+
+The watcher now anchors receipts in batches.
+`ReceiptBatchRegistry` records one Merkle root per batch, in one storage slot, and only the recorder fixed at deployment can write.
+Each leaf is `hashCanonical("relaymesh.batch.leaf.v1", { intentHash, receiptHash })`; inner nodes hash sorted pairs under `relaymesh.batch.node.v1`, so a proof is just the sibling hashes and a node can never pass as a leaf.
+Leaves are sorted and unique, and an odd node is carried up rather than duplicated, so two different sets of receipts can never share a root.
+A batch is written when 20 receipts are waiting or the oldest settled 30 minutes ago, with at most 256 per batch; all three are configurable.
+
+Crash recovery mirrors the old event-based approach.
+Each batch is stored with every leaf and proof before its root is sent.
+The next pass reads that exact root back with `getBatch`, finds its `BatchRecorded` event in the block the contract stored, and records the transaction; if the root is not on chain, it sends the same root again.
+Receipts that settle in the meantime wait for the next batch, so a root never changes after it may have been mined.
+The relayer funds check and the pause with one warning are unchanged.
+
+`IntentRegistry` is no longer written, and its four anchored receipts are never re-batched.
+The receipt checker reads it first, so those receipts verify exactly as before; this was re-checked in a browser against the live contract for the 150 tPOT and 1 tPOT receipts, including a tampered copy that reported "Does not match the chain".
+For a batched receipt, the browser recomputes the leaf, folds the proof served by `/api/intents/:id/anchor` and checks the root is recorded in `ReceiptBatchRegistry`.
+The proof needs no trust: a changed receipt reports a mismatch, and a proof that reaches no recorded root reports that it does not check out.
+
+What was verified, and how:
+
+- On V3, read-only: the contract's behaviour checks run inside the constructor of a test contract in one `eth_call` (the eth-rpc rejects state overrides).
+  Recording, read-back, duplicate roots, zero roots, empty batches, a non-recorder caller and a zero recorder all behave as specified, and a deliberately broken check fails the run.
+- On V3, simulated costs: deployment about 81.6 tPOT, one `recordBatch` about 3.9 tPOT at any batch size (the difference between two simulated deployments, one of which also records a batch).
+- On a local anvil chain, end to end: the real deploy script (code and recorder checked after deploying), the real watcher pass and batch client against a copy of the local database with two settled intents, a crash after mining that the next pass recovered without a second write, and `/verify` in the browser showing the leaf, proof, root and batch transaction, plus a tampered receipt reported as a mismatch.
+  Only the Substrate side of that pass was a stub, since nothing was left to scan.
+
+`ReceiptBatchRegistry` is not deployed on V3 yet.
+Deploying it costs about 82 tPOT and waits for approval.
