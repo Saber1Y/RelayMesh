@@ -1,6 +1,6 @@
 "use client";
 
-import { MagnifyingGlass, PaperPlaneTilt, SealCheck } from "@phosphor-icons/react";
+import { BracketsCurly, MagnifyingGlass, PaperPlaneTilt, SealCheck } from "@phosphor-icons/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -8,6 +8,7 @@ const TABS = [
   { href: "/desk", label: "Desk", icon: PaperPlaneTilt, match: (p: string) => p.startsWith("/desk") || p.startsWith("/intents") },
   { href: "/verify", label: "Verify", icon: SealCheck, match: (p: string) => p.startsWith("/verify") },
   { href: "/bridge", label: "Bridge", icon: MagnifyingGlass, match: (p: string) => p.startsWith("/bridge") },
+  { href: "/developers", label: "Developers", icon: BracketsCurly, match: (p: string) => p.startsWith("/developers") },
 ] as const;
 
 /**

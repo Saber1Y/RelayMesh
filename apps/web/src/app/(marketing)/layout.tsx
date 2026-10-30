@@ -20,6 +20,9 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
               {label}
             </a>
           ))}
+          <Link href="/developers" className="rounded-full px-3.5 py-1.5 text-sm text-muted transition-colors hover:text-ink">
+            Developers
+          </Link>
           <a
             href="https://github.com/Saber1Y/RelayMesh"
             target="_blank"
