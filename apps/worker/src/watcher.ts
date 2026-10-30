@@ -2,13 +2,14 @@ import { u8aEq } from "@polkadot/util";
 import { decodeAddress } from "@polkadot/util-crypto";
 import type { Hex } from "viem";
 import type { BlockRef, V3ChainReader } from "@relaymesh/chains";
-import { assessSettlement, batchLeaf, buildMerkleTree, buildReceipt, hashReceipt, merkleProof, type Evidence, type Quote, type StatusEvent } from "@relaymesh/core";
+import { assessSettlement, batchLeaf, bridgeCheckLeaf, buildMerkleTree, buildReceipt, hashReceipt, merkleProof, type Evidence, type Quote, type StatusEvent } from "@relaymesh/core";
 import {
   advanceCursor,
   appendStatusEvent,
   getCursor,
   listExecutionPlans,
   listIntentIdsByStatus,
+  listPendingBridgeChecks,
   listPendingReceiptAnchors,
   listQuotes,
   listUnconfirmedReceiptBatches,
@@ -561,10 +562,12 @@ async function anchorReceipts(ctx: WatcherContext, summary: PassSummary): Promis
     // Finish planned batches first: one sent before a crash, or one whose write failed.
     for (const batch of await listUnconfirmedReceiptBatches(ctx.db, registry.address)) await confirmBatch(ctx, registry, batch, summary);
 
+    // Settled receipts and verified bridge transfers share batches; receipts fill a batch first.
     const pending = await listPendingReceiptAnchors(ctx.db, registry.address, maxLeaves);
-    waiting = pending.length;
-    const oldest = pending[0];
-    if (!oldest || (pending.length < size && ctx.now() - oldest.settledAt < maxWaitSeconds)) return;
+    const pendingBridge = await listPendingBridgeChecks(ctx.db, registry.address, maxLeaves - pending.length);
+    waiting = pending.length + pendingBridge.length;
+    const oldestAt = Math.min(...pending.map((p) => p.settledAt), ...pendingBridge.map((b) => b.checkedAt));
+    if (waiting === 0 || (waiting < size && ctx.now() - oldestAt < maxWaitSeconds)) return;
 
     const leaves: Omit<ReceiptBatchLeaf, "proof">[] = [];
     summary.errors += await eachIntent(
@@ -579,10 +582,15 @@ async function anchorReceipts(ctx: WatcherContext, summary: PassSummary): Promis
         leaves.push({ intentId, intentHash: stored.intentHash, receiptHash, leafHash: batchLeaf(stored.intentHash, receiptHash) });
       },
     );
-    if (leaves.length === 0) return;
-    const tree = buildMerkleTree(leaves.map((l) => l.leafHash));
-    const batch = { contractAddress: registry.address, chainId: registry.chainId, root: tree.root, leafCount: leaves.length, createdAt: ctx.now() };
-    await planReceiptBatch(ctx.db, { ...batch, leaves: leaves.map((l) => ({ ...l, proof: merkleProof(tree, l.leafHash) })) });
+    const bridgeLeaves = pendingBridge.map((b) => ({ checkHash: b.checkHash, leafHash: bridgeCheckLeaf(b.checkHash) }));
+    if (leaves.length + bridgeLeaves.length === 0) return;
+    const tree = buildMerkleTree([...leaves.map((l) => l.leafHash), ...bridgeLeaves.map((l) => l.leafHash)]);
+    const batch = { contractAddress: registry.address, chainId: registry.chainId, root: tree.root, leafCount: leaves.length + bridgeLeaves.length, createdAt: ctx.now() };
+    await planReceiptBatch(ctx.db, {
+      ...batch,
+      leaves: leaves.map((l) => ({ ...l, proof: merkleProof(tree, l.leafHash) })),
+      bridgeLeaves: bridgeLeaves.map((l) => ({ ...l, proof: merkleProof(tree, l.leafHash) })),
+    });
     await confirmBatch(ctx, registry, batch, summary);
   } catch (error) {
     if (!(error instanceof RelayerFundsError)) {
@@ -617,7 +625,7 @@ async function confirmBatch(ctx: WatcherContext, registry: BatchRegistryClient, 
   }
   await recordReceiptBatchAnchor(ctx.db, { contractAddress: registry.address, root: batch.root, ...tx });
   summary.anchored += batch.leafCount;
-  ctx.log.info("receipt batch anchored", { root: batch.root, receipts: batch.leafCount, txHash: tx.txHash, recovered: onChain !== null });
+  ctx.log.info("batch anchored", { root: batch.root, leaves: batch.leafCount, txHash: tx.txHash, recovered: onChain !== null });
 }
 
 /** One watcher pass. Each stage reads fresh state, so passes are idempotent and safe to re-run after a crash. */

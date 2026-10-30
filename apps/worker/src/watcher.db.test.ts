@@ -2,11 +2,12 @@ import { sql } from "drizzle-orm";
 import type { Hex } from "viem";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import type { BlockExtrinsic, BlockRef, EvmBalanceRead, ExtrinsicCheck, ExtrinsicVerification, V3ChainReader } from "@relaymesh/chains";
-import { batchLeaf, buildReceipt, createIntent, hashReceipt, hashRequest, verifyMerkleProof, type IntentStatus, type Quote } from "@relaymesh/core";
+import { batchLeaf, BRIDGE_CHECK_DOMAIN, bridgeCheckLeaf, buildReceipt, hashCanonical, createIntent, hashReceipt, hashRequest, verifyMerkleProof, type IntentStatus, type Quote } from "@relaymesh/core";
 import {
   advanceCursor,
   appendStatusEvent,
   connectDb,
+  getBridgeCheckAnchor,
   getCursor,
   getReceiptBatchProof,
   insertIntent,
@@ -14,6 +15,7 @@ import {
   listUnconfirmedReceiptBatches,
   loadIntent,
   recordAnchor,
+  recordBridgeCheck,
   recordQuotes,
   selectQuote,
 } from "@relaymesh/db";
@@ -174,7 +176,7 @@ function ctx(): WatcherContext {
 }
 
 beforeEach(async () => {
-  await db.execute(sql`TRUNCATE receipt_batch_anchors, receipt_batch_leaves, receipt_batches, watcher_cursors, registry_anchors, execution_plans, status_events, idempotency_records, quotes, intents`);
+  await db.execute(sql`TRUNCATE bridge_batch_leaves, bridge_checks, receipt_batch_anchors, receipt_batch_leaves, receipt_batches, watcher_cursors, registry_anchors, execution_plans, status_events, idempotency_records, quotes, intents`);
   chain = new FakeChain();
   registry = new FakeBatchRegistry();
   // Anchor every receipt as it settles unless a test is about batching.
@@ -577,6 +579,22 @@ describe("batch anchoring", () => {
     }
     expect(await runPass(ctx())).toMatchObject({ anchored: 0, errors: 0 });
     expect(fake().writes).toHaveLength(1);
+  });
+
+  it("anchors verified bridge transfers in the same batch as receipts", async () => {
+    batching = { size: 2, maxWaitSeconds: 1_800, maxLeaves: 256 };
+    const facts = { deposit: { id: "832820-1", amount: "3300000000000000" }, payout: null };
+    const checkHash = hashCanonical(BRIDGE_CHECK_DOMAIN, facts);
+    await recordBridgeCheck(db, { checkHash, depositId: "832820-1", payoutTxHash: hash32(9n, "ee"), facts, checkedAt: clock });
+    expect(await runPass(ctx())).toMatchObject({ anchored: 0, errors: 0 }); // one leaf waiting, below the batch size
+
+    const { intent } = await settledIntent();
+    expect(fake().writes).toHaveLength(1);
+    const root = fake().writes[0] as Hex;
+    expect(await proofOf(intent.intentId)).toMatchObject({ root, leafCount: 2 });
+    const bridge = await getBridgeCheckAnchor(db, checkHash, fake().address);
+    expect(bridge).toMatchObject({ status: "anchored", root, leafCount: 2, leafHash: bridgeCheckLeaf(checkHash) });
+    expect(bridge?.status === "anchored" && verifyMerkleProof(bridge.leafHash, bridge.proof, root)).toBe(true);
   });
 
   it("writes a smaller batch once the oldest receipt has waited the maximum time", async () => {
