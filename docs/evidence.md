@@ -139,4 +139,42 @@ Batch anchoring replaces the two `IntentRegistry` writes per intent with one `re
 - **Only the relayer can write.** `recorder()` returns the relayer address above.
 - **Nothing is recorded yet.** `getBatch` for an unknown root returns all zeros.
 
-No batch has been written on V3 yet; the first one is recorded here once the watcher is configured with this address.
+The first batch is recorded below.
+
+## First receipt batch (2026-10-29)
+
+The watcher wrote its first batch once the 1 tPOT transfer settled in block #243878 had waited the 30-minute maximum.
+
+| Item | Value |
+| --- | --- |
+| Intent | `0x0bf897748ddda26464973d5892adacf2` (1 tPOT sent, 1 tPOT observed) |
+| Receipt hash | `0xbf0c64fdb733f06b288943f037128620507196072f4147984a199949b7c6cdb6` |
+| Batch root | `0x7fb0238ee8d32361a3a380d09e5e2219ff48cdf4e1775878d87fbb09440fca31` (one leaf, so the leaf is the root and the proof is empty) |
+| `recordBatch` transaction | `0xa55a7d13d2ec7ca322bdf3eb71131857801cc1fb76f76181a83b0e63198f0bae`, status `success` |
+| Block | #244183, 2026-10-29 22:27 UTC |
+| Cost | 3.86 tPOT (relayer balance 9.021 at #244182, 5.161 at #244183), mostly the Revive storage deposit for the new batch entry |
+
+### How the batch was verified
+
+- **In the browser.** `/verify?intent=0x0bf897748ddda26464973d5892adacf2` on the live site re-hashes the receipt, computes the leaf, folds the proof and reads `getBatch(root)` from ReceiptBatchRegistry: "Matches the chain", 1 receipt in the batch, recorded at #244183.
+- **The transaction succeeded.** `eth_getTransactionReceipt` returns status `success` in block #244183.
+- **The database agrees.** `receipt_batch_anchors` holds one row with this root, transaction and block.
+
+
+## First batch with a bridge check (2026-10-30)
+
+The second batch holds two leaves: the receipt of the 80 tPOT relayer top-up, which itself went through RelayMesh, and the verified bridge transfer `832820-1` (33 POT on Portaldot mainnet, paid as 32.01 WPOT on BSC).
+
+| Item | Value |
+| --- | --- |
+| Receipt leaf | Intent `0x110c4e9dcb9ae178fd692b94242c273c` (80 tPOT, settled 13:02 UTC) |
+| Bridge leaf | Check fingerprint `0xda724884f1382d6a856942f313e909adfb1e8d30ead24e9fc046038763b48ebf` for deposit `832820-1` and BSC payout `0xff150567…899d8534` |
+| Batch root | `0x185941a94451f35211c4cd9f12d7878654be2640cc3f3da2ff4ed28e90d87e0c` |
+| `recordBatch` transaction | `0xa4c5a85900d30901fd5f7298f8caa96671de0ddebac65798dd8d87adbd2ef1d9`, status `success` |
+| Block | #252961, 2026-10-30 13:09 UTC |
+| Cost | 3.86 tPOT (relayer balance 85.161 at #252960, 81.301 at #252961), the same as the one-leaf batch |
+
+### How it was verified
+
+- **In the browser.** `/bridge?deposit=832820-1` on the live site re-hashes the deposit and payout it shows to the anchored fingerprint, computes the bridge leaf, folds the proof and reads `getBatch(root)`: "Anchored on PortalDot V3", a batch of 2 entries, block #252961.
+- **Without RelayMesh code.** The script on `/developers` (viem only) recomputes the 1 tPOT receipt's leaf, folds its proof and finds the root recorded on chain.

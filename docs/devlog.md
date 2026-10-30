@@ -427,3 +427,25 @@ The watcher now exits after 12 passes in a row that fail without moving the scan
 
 Deploying the web build twice over an unreliable connection showed that copying straight into the live `.next` folder breaks pages while the copy runs, because `rsync --delete` removes old files first.
 The README now describes copying into a staging folder and swapping it in with one rename.
+
+## 2026-10-30: The first batch, and bridge checks on chain
+
+The first batch went out at 22:27 UTC on 2026-10-29, after the 1 tPOT transfer settled in block #243878 had waited the 30-minute maximum.
+It holds one receipt, so its leaf is its root; the transaction is `0xa55a7d13…63198f0bae` in block #244183, and `/verify` on the live site reports "Matches the chain" by folding the proof in the browser.
+It cost 3.86 tPOT, mostly the storage deposit for the new entry, which is the same for one leaf or 256: batching pays off as volume grows, and the relayer needs topping up before many more batches.
+
+Verified bridge transfers now join the same batches.
+When the Bridge page proves a deposit and its payout, the server records the check's facts (they must re-hash to the check fingerprint) in a new append-only `bridge_checks` table, and the watcher adds a leaf for each waiting check, under its own domain `relaymesh.batch.bridge.v1` so it can never be mistaken for a receipt leaf.
+The page then shows the check as queued, batching or anchored; for an anchored check, the browser re-hashes the deposit and payout it shows, folds the proof and reads the root from ReceiptBatchRegistry.
+Only the first verification of a deposit is anchored, and only a check with no open problems is recorded at all.
+
+Testing it locally turned up a real fault in the bridge checker.
+BSC's public node balances requests across machines, and some answer a search of older blocks with no logs: the same search for the 33 POT payout came back empty 7 times in 12, so a paid transfer could be reported as pending.
+Other free BSC nodes limit a log search to 25 or 50 blocks, too few to search three days of payouts.
+A returned log names its transaction and is real, so each search is now sent six times at once and the answers merged; six checks in a row from the server all found the payout, in 4 to 6 seconds each.
+
+The first bridge check went on chain at 13:09 UTC on 2026-10-30, in a batch with the receipt of the 80 tPOT relayer top-up, which was itself sent through RelayMesh.
+The two-leaf batch cost the same 3.86 tPOT as the one-leaf batch, and the live Bridge page reports deposit `832820-1` as anchored after checking the proof in the browser.
+
+The new **Developers** page documents the HTTP API with real examples, runs every GET endpoint live against the deployment, lists the hash rules and contracts, and gives a short viem-only script that verifies a receipt against PortalDot V3; run against the live server, it reports the 1 tPOT receipt as anchored.
+
