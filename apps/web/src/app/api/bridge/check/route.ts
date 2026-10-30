@@ -1,10 +1,11 @@
 import { u8aEq } from "@polkadot/util";
 import { decodeAddress } from "@polkadot/util-crypto";
 import { findBridgePayouts, readBridgeDeposit } from "@relaymesh/chains";
-import { assessBridgeTransfer, expectedPayout, hashBridgeCheck, parseDepositId } from "@relaymesh/core";
+import { assessBridgeTransfer, bridgeCheckFacts, expectedPayout, hashBridgeCheck, parseDepositId, type BridgeAssessment, type BridgeDeposit } from "@relaymesh/core";
+import { findBridgeCheckHash, getBridgeCheckAnchor, recordBridgeCheck } from "@relaymesh/db";
 import type { Hex } from "viem";
 import { errorResponse, handleError, json } from "@/server/http";
-import { bridgeConfig, getBscClient, getMainnetApi } from "@/server/services";
+import { batchRegistryAddress, bridgeConfig, getBscClient, getDb, getMainnetApi, nowSeconds } from "@/server/services";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,28 @@ function sameAccount(a: string, b: string): boolean {
     return u8aEq(decodeAddress(a), decodeAddress(b));
   } catch {
     return false;
+  }
+}
+
+/**
+ * Queues a fully verified transfer for the watcher's next batch in ReceiptBatchRegistry and reports
+ * where it stands. The first verification of a deposit is the one anchored, so the status is for the
+ * check hash recorded for this deposit. The check itself stands without this, so a database failure
+ * is logged and reported as no anchor rather than failing the check.
+ */
+async function anchorOf(deposit: BridgeDeposit, assessment: BridgeAssessment, checkHash: Hex) {
+  const contract = batchRegistryAddress();
+  if (!contract || assessment.verdict !== "verified" || assessment.problems.length > 0 || !assessment.payout) return null;
+  const depositId = `${deposit.id.block}-${deposit.id.index}`;
+  try {
+    const db = getDb();
+    await recordBridgeCheck(db, { checkHash, depositId, payoutTxHash: assessment.payout.txHash, facts: bridgeCheckFacts(deposit, assessment.payout), checkedAt: nowSeconds() });
+    const recorded = (await findBridgeCheckHash(db, depositId)) ?? checkHash;
+    const status = await getBridgeCheckAnchor(db, recorded, contract);
+    return status && { checkHash: recorded, contract, ...status };
+  } catch (error) {
+    console.error("bridge check anchoring failed", { depositId, error });
+    return null;
   }
 }
 
@@ -34,10 +57,12 @@ export async function GET(request: Request) {
     const expected = deposit.amount !== null ? expectedPayout(deposit.amount, bridgeConfig.fee) : null;
     const candidates = expected !== null ? await findBridgePayouts(getBscClient(), bridgeConfig, { after: deposit.time, amount: expected, recipient }) : [];
     const assessment = assessBridgeTransfer({ deposit, depositAddress: bridgeConfig.depositAddress, fee: bridgeConfig.fee, candidates, recipient, sameAccount });
+    const checkHash = hashBridgeCheck(deposit, assessment.payout);
     return json({
       deposit,
       assessment,
-      checkHash: hashBridgeCheck(deposit, assessment.payout),
+      checkHash,
+      anchor: await anchorOf(deposit, assessment, checkHash),
       bridge: {
         depositAddress: bridgeConfig.depositAddress,
         token: bridgeConfig.bsc.token,

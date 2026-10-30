@@ -1,11 +1,13 @@
 "use client";
 
 import { ArrowRight, ArrowSquareOut, CircleNotch, HourglassMedium, MagnifyingGlass, SealCheck, SealWarning, Clock } from "@phosphor-icons/react";
-import { formatBaseUnits } from "@relaymesh/core";
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { receiptBatchRegistryAbi } from "@relaymesh/contracts/abi/ReceiptBatchRegistry";
+import { BRIDGE_CHECK_DOMAIN, bridgeCheckLeaf, formatBaseUnits, hashCanonical, merkleRootFromProof } from "@relaymesh/core";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { createPublicClient, http, type Hex } from "viem";
 import { CopyButton } from "./copy-button";
 import { Button, inputClass, Mono, Panel } from "./ui";
-import { shortHash, type Tone } from "@/lib/format";
+import { explorerBlockUrl, shortHash, type Tone } from "@/lib/format";
 
 type Verdict = "verified" | "payout_pending" | "not_final" | "not_a_deposit";
 
@@ -29,6 +31,14 @@ interface CheckResult {
     problems: string[];
   };
   checkHash: string;
+  /** Where RelayMesh's record of this verified transfer stands in ReceiptBatchRegistry; null when not recorded. */
+  anchor:
+    | ({ checkHash: Hex; contract: Hex } & (
+        | { status: "queued" }
+        | { status: "batching"; root: Hex; leafHash: Hex; proof: Hex[] }
+        | { status: "anchored"; root: Hex; leafHash: Hex; proof: Hex[]; leafCount: number; txHash: Hex; blockNumber: string }
+      ))
+    | null;
   bridge: { depositAddress: string; token: string; reserve: string; feeBps: number; mainnetExplorerUrl: string; bscExplorerUrl: string };
 }
 
@@ -91,7 +101,12 @@ function gap(seconds: number): string {
 }
 
 /** Checks a PortalDot bridge transfer by reading Portaldot mainnet and BSC, through RelayMesh's server. */
-export function BridgeChecker({ initialDeposit }: { initialDeposit: string | null }) {
+interface V3 {
+  rpcUrl: string;
+  explorerUrl: string;
+}
+
+export function BridgeChecker({ initialDeposit, v3 }: { initialDeposit: string | null; v3: V3 }) {
   const [deposit, setDeposit] = useState(initialDeposit ?? "");
   const [recipient, setRecipient] = useState("");
   const [state, setState] = useState<{ kind: "idle" } | { kind: "working" } | { kind: "done"; result: CheckResult } | { kind: "error"; message: string }>({ kind: "idle" });
@@ -220,7 +235,7 @@ export function BridgeChecker({ initialDeposit }: { initialDeposit: string | nul
             <p className="text-sm text-critical">{state.message}</p>
           </Panel>
         )}
-        {state.kind === "done" && <Result result={state.result} />}
+        {state.kind === "done" && <Result result={state.result} v3={v3} />}
       </div>
     </>
   );
@@ -263,7 +278,7 @@ function Hash({ value, href, label }: { value: string; href?: string; label: str
   );
 }
 
-function Result({ result }: { result: CheckResult }) {
+function Result({ result, v3 }: { result: CheckResult; v3: V3 }) {
   const { deposit, assessment, bridge } = result;
   const verdict = VERDICT[assessment.verdict];
   const id = `${deposit.id.block}-${deposit.id.index}`;
@@ -354,6 +369,91 @@ function Result({ result }: { result: CheckResult }) {
           <CopyButton value={result.checkHash} label="Copy check fingerprint" />
         </p>
       </div>
+      {result.anchor && <OnChain result={result} anchor={result.anchor} v3={v3} />}
     </section>
+  );
+}
+
+type Anchor = NonNullable<CheckResult["anchor"]>;
+
+type OnChainCheck =
+  | { kind: "checking" }
+  | { kind: "match"; leafCount: number; factsMatch: boolean }
+  | { kind: "mismatch" }
+  | { kind: "error" };
+
+/**
+ * Where the verified transfer stands in RelayMesh's batches on PortalDot V3. For an anchored check the
+ * browser does the work: it hashes the facts shown above, computes the leaf, folds RelayMesh's proof
+ * and reads the root from ReceiptBatchRegistry itself.
+ */
+function OnChain({ result, anchor, v3 }: { result: CheckResult; anchor: Anchor; v3: V3 }) {
+  const client = useMemo(() => createPublicClient({ transport: http(v3.rpcUrl) }), [v3.rpcUrl]);
+  const [check, setCheck] = useState<OnChainCheck>({ kind: "checking" });
+
+  useEffect(() => {
+    if (anchor.status !== "anchored") return;
+    let live = true;
+    (async () => {
+      // The response's amounts are decimal strings, which canonical JSON writes exactly as the bigints hashed on the server.
+      const facts = { deposit: { ...result.deposit, id: `${result.deposit.id.block}-${result.deposit.id.index}` }, payout: result.assessment.payout };
+      const factsMatch = hashCanonical(BRIDGE_CHECK_DOMAIN, facts) === anchor.checkHash;
+      const root = merkleRootFromProof(bridgeCheckLeaf(anchor.checkHash), anchor.proof);
+      const batch = await client.readContract({ address: anchor.contract, abi: receiptBatchRegistryAbi, functionName: "getBatch", args: [root] });
+      return batch.recordedAt === 0n ? ({ kind: "mismatch" } as const) : ({ kind: "match", leafCount: batch.leafCount, factsMatch } as const);
+    })()
+      .catch((): OnChainCheck => ({ kind: "error" }))
+      .then((next) => live && setCheck(next));
+    return () => {
+      live = false;
+    };
+  }, [anchor, client, result]);
+
+  return (
+    <div className="grid gap-2 rounded-b-[18px] border-t border-line bg-raised/40 px-5 py-4 text-sm sm:px-6">
+      <p className="font-semibold">On chain</p>
+      {anchor.status === "queued" && (
+        <p className="text-muted">
+          RelayMesh recorded this check and queued it for its next batch on PortalDot V3. Batches go out every 30 minutes, or sooner once 20 entries are waiting.
+        </p>
+      )}
+      {anchor.status === "batching" && <p className="text-muted">This check is in a batch being written to PortalDot V3 now. Check again in a minute.</p>}
+      {anchor.status === "anchored" && (
+        <>
+          {check.kind === "checking" && (
+            <p className="flex items-center gap-2 text-muted">
+              <CircleNotch size={14} className="animate-spin text-accent" />
+              Folding the Merkle proof and reading the root from ReceiptBatchRegistry…
+            </p>
+          )}
+          {check.kind === "match" && (
+            <p className="flex items-start gap-2 text-positive">
+              <SealCheck size={16} weight="fill" className="mt-0.5 shrink-0" />
+              <span>
+                Anchored on PortalDot V3. Your browser folded the proof from this check’s fingerprint to a root ReceiptBatchRegistry holds, in a batch of {check.leafCount}{" "}
+                {check.leafCount === 1 ? "entry" : "entries"}.
+                {!check.factsMatch && <span className="text-caution"> The facts shown re-hash differently: the anchored fingerprint is from this deposit’s first check.</span>}
+              </span>
+            </p>
+          )}
+          {check.kind === "mismatch" && <p className="text-critical">The proof does not lead to a root recorded in ReceiptBatchRegistry. Do not rely on this anchor.</p>}
+          {check.kind === "error" && <p className="text-caution">Could not read PortalDot V3 to confirm the batch. Try again in a moment.</p>}
+          <dl className="grid gap-x-6 gap-y-2 text-[13px] sm:grid-cols-3">
+            <Fact label="Batch root">
+              <Hash value={anchor.root} label="Copy batch root" />
+            </Fact>
+            <Fact label="Transaction">
+              <Hash value={anchor.txHash} label="Copy batch transaction hash" />
+            </Fact>
+            <Fact label="Block">
+              <a href={explorerBlockUrl(v3.explorerUrl, anchor.blockNumber)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 tabular-nums text-accent hover:underline">
+                #{anchor.blockNumber}
+                <ArrowSquareOut size={11} />
+              </a>
+            </Fact>
+          </dl>
+        </>
+      )}
+    </div>
   );
 }
