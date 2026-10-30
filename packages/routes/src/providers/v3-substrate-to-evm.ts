@@ -2,7 +2,7 @@ import { u8aEq } from "@polkadot/util";
 import { decodeAddress, encodeAddress } from "@polkadot/util-crypto";
 import type { Hex } from "viem";
 import { fallbackAccountIdForH160, type V3NativeClient } from "@relaymesh/chains";
-import { assertQuoteUsable, getAsset, RelayMeshError, type Intent, type Quote } from "@relaymesh/core";
+import { assertQuoteUsable, getAsset, RelayMeshError, serviceFee as serviceFeeOf, type Intent, type Quote } from "@relaymesh/core";
 import type { ExecutionPlan, ProviderStatus, QuoteContext, QuoteResult, RouteProvider } from "../types";
 
 export const V3_SUBSTRATE_TO_EVM_PROVIDER_ID = "portaldot-v3-native";
@@ -24,8 +24,17 @@ const ESTIMATED_BLOCKS_TO_FINALITY = 3;
 interface TransferAnalysis {
   destinationAccount: Uint8Array;
   expectedOutput: bigint;
+  /** Network fee estimate for the whole call. */
   fee: bigint;
+  /** RelayMesh's fee and the account it is paid to, or null when none is charged. */
+  serviceFee: { amount: bigint; account: string } | null;
   callHex: Hex;
+}
+
+/** RelayMesh's per-transfer fee, paid to the account behind an EVM address (the relayer that anchors receipts). */
+export interface ServiceFeeConfig {
+  amount: bigint;
+  recipient: Hex;
 }
 
 type Analysis = { ok: true; value: TransferAnalysis } | Extract<QuoteResult, { ok: false }>;
@@ -50,7 +59,14 @@ export class V3SubstrateToEvmProvider implements RouteProvider {
   readonly name = "PortalDot V3 native transfer";
   readonly description = "Transfers tPOT from a PortalDot V3 Substrate account to an EVM address on the same chain via Revive account mapping.";
 
-  constructor(private readonly client: V3NativeClient) {}
+  /**
+   * With `serviceFee`, each transfer also pays that fee to the account behind `serviceFee.recipient`,
+   * in the same signed call, so the transfers fund the anchoring of their own receipts.
+   */
+  constructor(
+    private readonly client: V3NativeClient,
+    private readonly serviceFee: ServiceFeeConfig | null = null,
+  ) {}
 
   status(): ProviderStatus {
     return { available: true };
@@ -76,7 +92,12 @@ export class V3SubstrateToEvmProvider implements RouteProvider {
       provider: this.id,
       routeId: V3_SUBSTRATE_TO_EVM_ROUTE_ID,
       expectedOutput: analysis.value.expectedOutput,
-      fees: [{ kind: "network", chain: "portaldot-v3-substrate", asset: "native", amount: analysis.value.fee, basis: "estimate" }],
+      fees: [
+        { kind: "network", chain: "portaldot-v3-substrate", asset: "native", amount: analysis.value.fee, basis: "estimate" },
+        ...(analysis.value.serviceFee
+          ? [{ kind: "provider" as const, chain: "portaldot-v3-substrate" as const, asset: "native", amount: analysis.value.serviceFee.amount, basis: "quoted" as const, recipient: analysis.value.serviceFee.account }]
+          : []),
+      ],
       retrievedAt: ctx.now,
       expiresAt: ctx.now + QUOTE_TTL_SECONDS,
       estimatedSeconds: Math.ceil((ESTIMATED_BLOCKS_TO_FINALITY * this.client.expectedBlockTimeMs) / 1000),
@@ -93,11 +114,15 @@ export class V3SubstrateToEvmProvider implements RouteProvider {
     // Balances, mapping or fees may have changed since quoting; never hand out a plan that no longer matches.
     const analysis = await this.analyze(intent);
     if (!analysis.ok) throw new RelayMeshError("CONSTRAINT_VIOLATION", analysis.reason);
-    const { destinationAccount, expectedOutput, fee, callHex } = analysis.value;
+    const { destinationAccount, expectedOutput, fee, serviceFee, callHex } = analysis.value;
     if (expectedOutput !== quote.expectedOutput) {
       throw new RelayMeshError("QUOTE_MISMATCH", "Destination state changed since the quote; request a fresh quote");
     }
-    if (intent.constraints.maxFee !== undefined && fee > intent.constraints.maxFee) {
+    const quoted = serviceFeeOf(quote);
+    if (quoted?.amount !== serviceFee?.amount || quoted?.recipient !== serviceFee?.account) {
+      throw new RelayMeshError("QUOTE_MISMATCH", "RelayMesh's fee changed since the quote; request a fresh quote");
+    }
+    if (intent.constraints.maxFee !== undefined && fee + (serviceFee?.amount ?? 0n) > intent.constraints.maxFee) {
       throw new RelayMeshError("CONSTRAINT_VIOLATION", "Current fee estimate exceeds the maximum fee constraint", "constraints.maxFee");
     }
 
@@ -107,7 +132,13 @@ export class V3SubstrateToEvmProvider implements RouteProvider {
       chain: "portaldot-v3-substrate",
       signer: intent.requester,
       callHex,
-      call: { section: "balances", method: "transferKeepAlive", args: { dest: destination, value: intent.source.amount.toString() } },
+      call: serviceFee
+        ? {
+            section: "utility",
+            method: "batchAll",
+            args: { dest: destination, value: intent.source.amount.toString(), feeDest: serviceFee.account, fee: serviceFee.amount.toString() },
+          }
+        : { section: "balances", method: "transferKeepAlive", args: { dest: destination, value: intent.source.amount.toString() } },
       quoteId: quote.quoteId,
       submitBefore: quote.expiresAt,
       estimatedFee: fee,
@@ -135,18 +166,20 @@ export class V3SubstrateToEvmProvider implements RouteProvider {
 
     const amount = intent.source.amount;
     const ed = client.existentialDeposit;
+    const serviceFee = await this.serviceFeeFor(destinationAccount, sender);
     const [senderBalance, destinationBalance, estimate] = await Promise.all([
       client.balance(sender),
       client.balance(destinationAccount),
-      client.estimateTransferKeepAlive(intent.requester, destinationAccount, amount),
+      client.estimateTransferKeepAlive(intent.requester, destinationAccount, amount, serviceFee ? { to: decodeAddress(serviceFee.account), amount: serviceFee.amount } : undefined),
     ]);
 
     const spendable = reducible(senderBalance.free, senderBalance.frozen, ed);
-    if (amount + estimate.partialFee > spendable) {
+    const needed = amount + (serviceFee?.amount ?? 0n) + estimate.partialFee;
+    if (needed > spendable) {
       return {
         ok: false,
         code: "INSUFFICIENT_BALANCE",
-        reason: `Needs ${amount + estimate.partialFee} base units (amount + estimated fee) but only ${spendable} is spendable while keeping the account alive`,
+        reason: `Needs ${needed} base units (amount${serviceFee ? " + RelayMesh fee" : ""} + estimated network fee) but only ${spendable} is spendable while keeping the account alive`,
       };
     }
     if (destinationBalance.free === 0n && amount < ed) {
@@ -160,6 +193,18 @@ export class V3SubstrateToEvmProvider implements RouteProvider {
       return { ok: false, code: "AMOUNT_TOO_SMALL", reason: "The transfer would not increase the EVM-visible balance (it is absorbed by the existential deposit or frozen funds)" };
     }
 
-    return { ok: true, value: { destinationAccount, expectedOutput, fee: estimate.partialFee, callHex: estimate.callHex } };
+    return { ok: true, value: { destinationAccount, expectedOutput, fee: estimate.partialFee, serviceFee, callHex: estimate.callHex } };
+  }
+
+  /**
+   * The fee and the native account it is paid to. Waived when the transfer already goes to that
+   * account (topping up the relayer) or comes from it.
+   */
+  private async serviceFeeFor(destinationAccount: Uint8Array, sender: Uint8Array): Promise<{ amount: bigint; account: string } | null> {
+    if (!this.serviceFee || this.serviceFee.amount === 0n) return null;
+    const h160 = this.serviceFee.recipient.toLowerCase() as Hex;
+    const account = (await this.client.originalAccount(h160)) ?? fallbackAccountIdForH160(h160);
+    if (u8aEq(account, destinationAccount) || u8aEq(account, sender)) return null;
+    return { amount: this.serviceFee.amount, account: encodeAddress(account, this.client.ss58Prefix) };
   }
 }

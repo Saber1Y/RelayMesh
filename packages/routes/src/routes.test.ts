@@ -14,6 +14,9 @@ const ED = 10_000_000_000_000n; // 0.1 tPOT
 const ONE = 100_000_000_000_000n; // 1 tPOT at 14 decimals
 const FEE = 1_234_567_890n;
 const CALL_HEX = "0x0603" as Hex;
+const BATCH_CALL_HEX = "0x1a02" as Hex;
+const SERVICE_FEE = 20_000_000_000_000n; // 0.2 tPOT
+const RELAYER = "0xD0Dd606e328E9402C056d50171CAcAAdFB2563e4" as Hex;
 
 class FakeV3Client implements V3NativeClient {
   ss58Prefix = 42;
@@ -23,6 +26,7 @@ class FakeV3Client implements V3NativeClient {
   balances = new Map<string, AccountBalance>();
   mappings = new Map<string, Uint8Array>();
   fee = FEE;
+  estimates: { amount: bigint; serviceFee?: { to: Uint8Array; amount: bigint } }[] = [];
 
   async balance(address: string | Uint8Array): Promise<AccountBalance> {
     return this.balances.get(u8aToHex(decodeAddress(address))) ?? { free: 0n, frozen: 0n };
@@ -30,8 +34,9 @@ class FakeV3Client implements V3NativeClient {
   async originalAccount(h160: Hex): Promise<Uint8Array | null> {
     return this.mappings.get(h160) ?? null;
   }
-  async estimateTransferKeepAlive(): Promise<{ partialFee: bigint; callHex: Hex }> {
-    return { partialFee: this.fee, callHex: CALL_HEX };
+  async estimateTransferKeepAlive(_from: string, _to: Uint8Array, amount: bigint, serviceFee?: { to: Uint8Array; amount: bigint }): Promise<{ partialFee: bigint; callHex: Hex }> {
+    this.estimates.push({ amount, ...(serviceFee && { serviceFee }) });
+    return { partialFee: this.fee, callHex: serviceFee ? BATCH_CALL_HEX : CALL_HEX };
   }
   setBalance(account: string | Uint8Array, free: bigint, frozen = 0n): void {
     this.balances.set(u8aToHex(decodeAddress(account)), { free, frozen });
@@ -85,7 +90,7 @@ describe("V3SubstrateToEvmProvider quotes", () => {
     const { client, provider } = setup();
     client.setBalance(fallbackAccountIdForH160(RECIPIENT_LOWER), ONE);
     const quote = await quoteOk(provider);
-    expect(quote.expectedOutput).toBe(ONE * 10_000n);
+    expect(quote.expectedOutput).toBe((await quoteOk(new V3SubstrateToEvmProvider(client))).expectedOutput);
     expect(quote.fees).toEqual([{ kind: "network", chain: "portaldot-v3-substrate", asset: "native", amount: FEE, basis: "estimate" }]);
     expect(quote.expiresAt - quote.retrievedAt).toBe(QUOTE_TTL_SECONDS);
     expect(quote.estimatedSeconds).toBe(18);
@@ -204,6 +209,67 @@ describe("V3SubstrateToEvmProvider execution plans", () => {
     const quote = { ...(await quoteOk(provider, intent)), provider: "someone-else" };
     const error = await provider.buildExecution(intent, quote, { now: NOW + 1 }).catch((e: unknown) => e);
     expect((error as Error).message).toMatch(/not issued by/);
+  });
+});
+
+describe("RelayMesh's service fee", () => {
+  const relayerAccount = encodeAddress(fallbackAccountIdForH160(RELAYER.toLowerCase() as Hex), 42);
+
+  function withFee(amount = SERVICE_FEE) {
+    const client = new FakeV3Client();
+    client.setBalance(ALICE, 10n * ONE);
+    return { client, provider: new V3SubstrateToEvmProvider(client, { amount, recipient: RELAYER }) };
+  }
+
+  it("quotes the fee as a provider fee paid to the relayer's account, bundled into the one call", async () => {
+    const { client, provider } = withFee();
+    const intent = intentFor();
+    const quote = await quoteOk(provider, intent);
+    expect(quote.fees).toEqual([
+      { kind: "network", chain: "portaldot-v3-substrate", asset: "native", amount: FEE, basis: "estimate" },
+      { kind: "provider", chain: "portaldot-v3-substrate", asset: "native", amount: SERVICE_FEE, basis: "quoted", recipient: relayerAccount },
+    ]);
+    // The recipient still receives the full amount: the fee is paid on top.
+    expect(quote.expectedOutput).toBe((await quoteOk(new V3SubstrateToEvmProvider(client))).expectedOutput);
+    expect(client.estimates[0]).toEqual({ amount: ONE, serviceFee: { to: decodeAddress(relayerAccount), amount: SERVICE_FEE } });
+
+    const plan = await provider.buildExecution(intent, quote, { now: NOW + 5 });
+    expect(plan.callHex).toBe(BATCH_CALL_HEX);
+    expect(plan.call).toMatchObject({ section: "utility", method: "batchAll", args: { value: ONE.toString(), feeDest: relayerAccount, fee: SERVICE_FEE.toString() } });
+  });
+
+  it("needs the amount, the fee and the network fee to be spendable", async () => {
+    const { client, provider } = withFee();
+    client.setBalance(ALICE, ONE + ED + FEE + SERVICE_FEE - 1n);
+    expectRejected(await provider.quote(intentFor(), { now: NOW }), "INSUFFICIENT_BALANCE");
+    client.setBalance(ALICE, ONE + ED + FEE + SERVICE_FEE);
+    await quoteOk(provider);
+  });
+
+  it("waives the fee for a transfer to the relayer itself", async () => {
+    const { client, provider } = withFee();
+    const quote = await quoteOk(provider, intentFor({ destination: { chain: "portaldot-v3-evm", asset: "native", recipient: RELAYER } }));
+    expect(quote.fees.map((f) => f.kind)).toEqual(["network"]);
+    expect(client.estimates.at(-1)?.serviceFee).toBeUndefined();
+  });
+
+  it("counts the fee against maxFee", async () => {
+    const { provider } = withFee();
+    const intent = intentFor({ constraints: { deadline: NOW + 600, maxFee: (FEE + SERVICE_FEE - 1n).toString() } });
+    const result = await provider.quote(intent, { now: NOW });
+    const quote = result.ok ? result.quotes[0] : undefined;
+    // Quoting reports every route; the constraint stops it at selection.
+    expect(quote).toBeDefined();
+    await expectCode(provider.buildExecution(intent, quote as Quote, { now: NOW + 5 }), "CONSTRAINT_VIOLATION");
+  });
+
+  it("refuses a plan when the fee changed since the quote", async () => {
+    const { client, provider } = withFee();
+    const intent = intentFor();
+    const quote = await quoteOk(provider, intent);
+    await expectCode(new V3SubstrateToEvmProvider(client, { amount: SERVICE_FEE * 2n, recipient: RELAYER }).buildExecution(intent, quote, { now: NOW + 5 }), "QUOTE_MISMATCH");
+    await expectCode(new V3SubstrateToEvmProvider(client).buildExecution(intent, quote, { now: NOW + 5 }), "QUOTE_MISMATCH");
+    await expect(provider.buildExecution(intent, quote, { now: NOW + 5 })).resolves.toMatchObject({ callHex: BATCH_CALL_HEX });
   });
 });
 
