@@ -5,6 +5,7 @@ import { buildReceipt, hashReceipt, type Receipt } from "@relaymesh/core";
 import { countAnchoredReceipts, countIntentsByStatus, listIntentIdsByStatus, listQuotes, loadIntent, recentSettlementSeconds } from "@relaymesh/db";
 import { Badge, stagger } from "@/components/ui";
 import { formatAmount, shortHash, type Tone } from "@/lib/format";
+import { loadEconomics, type Economics } from "@/server/economics";
 import { getDb } from "@/server/services";
 
 export const dynamic = "force-dynamic";
@@ -126,8 +127,65 @@ function ReceiptCard({ receipt, receiptHash }: { receipt: Receipt; receiptHash: 
   );
 }
 
+/** The fee ledger, or null with the reason logged; the section is left out rather than shown with made-up numbers. */
+async function loadLedger(): Promise<Economics | null> {
+  try {
+    return await loadEconomics();
+  } catch (error) {
+    console.error("[relaymesh] fee ledger unavailable", error);
+    return null;
+  }
+}
+
+const tpot = (v: bigint) => formatAmount(v, "portaldot-v3-substrate");
+
+function FeeLedger({ ledger }: { ledger: Economics }) {
+  const fee = ledger.feePerTransfer;
+  const perBatch = ledger.batches > 0 ? ledger.anchoringSpent / BigInt(ledger.batches) : null;
+  const breakEven = fee && perBatch ? (perBatch + fee - 1n) / fee : null;
+  const covered = ledger.anchoringSpent > 0n ? Number((ledger.feesCollected * 1000n) / ledger.anchoringSpent) / 10 : null;
+  const figures = [
+    { label: "RelayMesh fee", value: fee ? tpot(fee) : "Off", note: "per transfer, paid in the same signed call" },
+    { label: "Collected", value: tpot(ledger.feesCollected), note: `from ${ledger.feeTransfers} settled ${ledger.feeTransfers === 1 ? "transfer" : "transfers"}` },
+    { label: "Spent on anchoring", value: tpot(ledger.anchoringSpent), note: `${ledger.batches} ${ledger.batches === 1 ? "batch" : "batches"}, ${ledger.anchoredEntries} entries on V3` },
+    { label: "Relayer balance", value: ledger.relayerBalance === null ? "Not set" : tpot(ledger.relayerBalance), note: "pays for the next batches" },
+  ];
+  return (
+    <section id="fee" className="mx-auto w-full max-w-[1160px] scroll-mt-28 border-t border-line px-5 py-24 md:px-10 md:py-28">
+      <div className="grid gap-12 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+        <div className="grid content-start gap-5">
+          <p className="text-sm font-semibold text-accent">Sustainability</p>
+          <h2 className="text-4xl font-semibold tracking-[-0.05em] text-balance md:text-5xl">Each transfer pays for its own proof.</h2>
+          <p className="max-w-[44ch] leading-relaxed text-muted text-pretty">
+            Anchoring receipts on chain costs gas. A small fee, signed in the same call as the transfer, goes straight to the relayer that writes the batches. The recipient
+            still gets the full amount, and the fee is part of the receipt anyone can verify.
+          </p>
+        </div>
+        <div className="grid content-start gap-6">
+          <dl className="grid gap-px overflow-hidden rounded-[22px] border border-line bg-line sm:grid-cols-2">
+            {figures.map((f) => (
+              <div key={f.label} className="grid content-start gap-1 bg-surface px-6 py-5">
+                <dt className="text-[13px] text-muted">{f.label}</dt>
+                <dd className="text-2xl font-semibold tracking-[-0.03em] tabular-nums">{f.value}</dd>
+                <dd className="text-[13px] text-muted">{f.note}</dd>
+              </div>
+            ))}
+          </dl>
+          {perBatch !== null && (
+            <p className="max-w-[60ch] text-sm leading-relaxed text-muted text-pretty">
+              A batch costs about {tpot(perBatch)} however many entries it holds, up to 256.
+              {breakEven !== null && <> At {breakEven.toString()} transfers per batch the fee covers it in full; with full batches it could fall below {tpot(perBatch / 256n)}.</>}
+              {covered !== null && <> So far, at testnet volume, fees have covered {covered}% of anchoring.</>}
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default async function LandingPage() {
-  const proof = await loadProof();
+  const [proof, ledger] = await Promise.all([loadProof(), loadLedger()]);
 
   return (
     <>
@@ -311,11 +369,13 @@ export default async function LandingPage() {
         </div>
       </section>
 
+      {ledger && <FeeLedger ledger={ledger} />}
+
       <section className="mx-auto w-full max-w-[1160px] px-5 pb-28 md:px-10">
         <div className="grid items-end gap-8 rounded-[28px] bg-accent px-7 py-12 text-accent-ink shadow-lift md:grid-cols-[minmax(0,1fr)_auto] md:px-12">
           <div className="grid gap-3">
             <h2 className="max-w-[20ch] text-4xl font-semibold tracking-[-0.05em] md:text-5xl">Send a transfer and keep the proof.</h2>
-            <p className="max-w-[46ch] text-accent-ink/80">Free on the PortalDot V3 testnet. Your keys stay in your wallet.</p>
+            <p className="max-w-[46ch] text-accent-ink/80">Runs on the PortalDot V3 testnet with test tPOT. Your keys stay in your wallet.</p>
           </div>
           <Link
             href="/desk"

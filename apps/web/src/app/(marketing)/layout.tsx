@@ -6,6 +6,7 @@ const SECTIONS = [
   { href: "#how", label: "How it works" },
   { href: "#tools", label: "Tools" },
   { href: "#proof", label: "Proof" },
+  { href: "#fee", label: "Fee model" },
 ] as const;
 
 /** The public site: a floating header with section links and the one way into the app. */

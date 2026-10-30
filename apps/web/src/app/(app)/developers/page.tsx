@@ -282,6 +282,11 @@ export default async function DevelopersPage() {
                 <Mono className="mb-1 block">{'{ "error": { "code", "message", "field"? } }'}</Mono>
                 With a matching HTTP status: 400 for bad input, 404 when not found, 409 for a step out of order.
               </Basic>
+              <Basic term="Fees" wide>
+                Quotes list the network fee estimate and, when set, RelayMesh’s fee as a <Mono>provider</Mono> fee with its <Mono>recipient</Mono>. The fee is paid in the same
+                signed call as the transfer (<Mono>utility.batchAll</Mono>), goes to the relayer that pays for anchoring, counts against <Mono>maxFee</Mono>, and appears in the
+                receipt as <Mono>serviceFee</Mono>. The recipient always gets the full amount.
+              </Basic>
             </dl>
           </section>
 
@@ -353,9 +358,9 @@ export default async function DevelopersPage() {
   );
 }
 
-function Basic({ term, children }: { term: string; children: ReactNode }) {
+function Basic({ term, children, wide = false }: { term: string; children: ReactNode; wide?: boolean }) {
   return (
-    <div className="grid content-start gap-1 bg-surface px-5 py-4">
+    <div className={`grid content-start gap-1 bg-surface px-5 py-4 ${wide ? "sm:col-span-2" : ""}`}>
       <dt className="text-[13px] text-muted">{term}</dt>
       <dd className="text-sm">{children}</dd>
     </div>
