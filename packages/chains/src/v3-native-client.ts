@@ -28,7 +28,11 @@ export interface V3NativeClient {
   balance(address: string | Uint8Array): Promise<AccountBalance>;
   /** The native account an H160 is mapped to via revive.mapAccount, or null if unmapped. */
   originalAccount(h160: Hex): Promise<Uint8Array | null>;
-  estimateTransferKeepAlive(from: string, to: Uint8Array, amount: bigint): Promise<TransferEstimate>;
+  /**
+   * balances.transferKeepAlive of `amount` to `to`. With `serviceFee`, the call is utility.batchAll of
+   * that transfer and a second transferKeepAlive of the fee: one signature, and both or neither happen.
+   */
+  estimateTransferKeepAlive(from: string, to: Uint8Array, amount: bigint, serviceFee?: { to: Uint8Array; amount: bigint }): Promise<TransferEstimate>;
 }
 
 export function createV3NativeClient(api: ApiPromise): V3NativeClient {
@@ -49,8 +53,11 @@ export function createV3NativeClient(api: ApiPromise): V3NativeClient {
       return mapped.isSome ? mapped.unwrap().toU8a() : null;
     },
 
-    async estimateTransferKeepAlive(from, to, amount) {
-      const tx = api.tx.balances.transferKeepAlive(encodeAddress(to, ss58Prefix), amount);
+    async estimateTransferKeepAlive(from, to, amount, serviceFee) {
+      const transfer = api.tx.balances.transferKeepAlive(encodeAddress(to, ss58Prefix), amount);
+      const tx = serviceFee
+        ? api.tx.utility.batchAll([transfer, api.tx.balances.transferKeepAlive(encodeAddress(serviceFee.to, ss58Prefix), serviceFee.amount)])
+        : transfer;
       const info = await tx.paymentInfo(encodeAddress(decodeAddress(from), ss58Prefix));
       return { partialFee: info.partialFee.toBigInt(), callHex: u8aToHex(tx.method.toU8a()) as Hex };
     },
