@@ -3,7 +3,7 @@ import { canonicalJson, hashCanonical } from "./canonical";
 import type { ChainId } from "./chains";
 import { RelayMeshError } from "./errors";
 import { hashIntent, type Intent } from "./intent";
-import type { Quote } from "./quote";
+import { serviceFee, type Quote } from "./quote";
 import { currentStatus, type Evidence, type IntentStatus, type StatusEvent, type VerificationMode } from "./status";
 
 export const RECEIPT_HASH_DOMAIN = "relaymesh.receipt.v1";
@@ -29,6 +29,11 @@ export interface Receipt {
   source: ReceiptLeg & { requester: string; amount: bigint };
   destination: ReceiptLeg & { recipient: string; expectedOutput: bigint; observedAmount: bigint | null };
   timeline: { seq: number; status: IntentStatus; at: number; reason: string }[];
+  /**
+   * RelayMesh's fee, paid to `recipient` in the same signed call as the transfer. Present only when one
+   * was charged, so receipts from before the fee hash exactly as they did.
+   */
+  serviceFee?: { amount: bigint; recipient: string };
 }
 
 export interface BuildReceiptInput {
@@ -67,6 +72,7 @@ export function buildReceipt({ intent, intentHash, quote, history }: BuildReceip
   const sourceEvidence = latestEvidence(history, "source_transaction");
   const destinationEvidence = latestEvidence(history, "destination_state");
   const settled = history.find((event) => event.status === "SETTLED");
+  const fee = serviceFee(quote);
 
   return {
     version: 1,
@@ -87,6 +93,7 @@ export function buildReceipt({ intent, intentHash, quote, history }: BuildReceip
       observedAmount: destinationEvidence?.amount ?? null,
     },
     timeline: history.map(({ seq, status: s, at, reason }) => ({ seq, status: s, at, reason })),
+    ...(fee && { serviceFee: fee }),
   };
 }
 

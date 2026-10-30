@@ -104,6 +104,21 @@ describe("receipts", () => {
     expect(hashReceipt({ ...a, status: "NEEDS_REVIEW" })).not.toBe(hashReceipt(a));
   });
 
+  it("records RelayMesh's fee only when one was charged, so earlier receipts keep their hash", () => {
+    const plain = buildReceipt({ intent, intentHash, quote, history: settledHistory() });
+    expect("serviceFee" in plain).toBe(false);
+    // A network fee estimate alone, as every quote before the fee carried, adds nothing to the receipt.
+    expect(serializeReceipt(plain)).not.toContain("serviceFee");
+
+    const recipient = "5EeRe5byF4PndSAwaESnGPLjZf5zoSnbFS7faZ251tYUZdP7";
+    const charged = fixtureQuote({
+      fees: [...quote.fees, { kind: "provider", chain: "portaldot-v3-substrate", asset: "native", amount: 20_000_000_000_000n, basis: "quoted", recipient }],
+    });
+    const receipt = buildReceipt({ intent, intentHash, quote: charged, history: settledHistory() });
+    expect(receipt.serviceFee).toEqual({ amount: 20_000_000_000_000n, recipient });
+    expect(hashReceipt(receipt)).not.toBe(hashReceipt(plain));
+  });
+
   it("refuses a mismatched intent hash or quote", () => {
     expect(() => buildReceipt({ intent, intentHash: `0x${"00".repeat(32)}`, quote, history: settledHistory() })).toThrow(/intentHash/);
     expect(() =>

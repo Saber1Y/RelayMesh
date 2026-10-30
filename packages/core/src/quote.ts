@@ -12,6 +12,8 @@ export interface Fee {
   amount: bigint;
   /** "estimate" when computed before submission (e.g. payment_queryInfo); "quoted" when the provider committed to it. */
   basis: "estimate" | "quoted";
+  /** The account a fee is paid to, for a fee paid in the same signed call (RelayMesh's own fee). */
+  recipient?: string;
 }
 
 export interface Quote {
@@ -33,6 +35,15 @@ export function sourceFeeTotal(quote: Quote, intent: Intent): bigint {
   return quote.fees
     .filter((fee) => fee.chain === intent.source.chain && fee.asset === intent.source.asset)
     .reduce((sum, fee) => sum + fee.amount, 0n);
+}
+
+/**
+ * RelayMesh's own fee: a provider fee in the source asset, paid to a named account in the same signed
+ * call as the transfer. It funds anchoring receipts on chain. Null when the quote carries none.
+ */
+export function serviceFee(quote: Quote): { amount: bigint; recipient: string } | null {
+  const fee = quote.fees.find((f) => f.kind === "provider" && f.recipient !== undefined);
+  return fee?.recipient ? { amount: fee.amount, recipient: fee.recipient } : null;
 }
 
 /** Fees in any other chain/asset cannot be compared against maxFee and must be disclosed separately. */
