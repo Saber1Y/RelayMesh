@@ -449,3 +449,20 @@ The two-leaf batch cost the same 3.86 tPOT as the one-leaf batch, and the live B
 
 The new **Developers** page documents the HTTP API with real examples, runs every GET endpoint live against the deployment, lists the hash rules and contracts, and gives a short viem-only script that verifies a receipt against PortalDot V3; run against the live server, it reports the 1 tPOT receipt as anchored.
 
+## 2026-10-30: Transfers pay for their own proof
+
+Anchoring costs the relayer about 3.86 tPOT a batch, so until now someone had to top it up by hand.
+RelayMesh now charges a small fee on each transfer, set by `RELAYMESH_FEE` (0.2 tPOT on the live server) and paid to the account behind `RELAYMESH_FEE_RECIPIENT`, the relayer itself.
+
+- **One signature, both or neither.** The call the wallet signs is `utility.batchAll` of the transfer and a second `transferKeepAlive` of the fee; if either fails, neither happens.
+- **The recipient still gets the full amount.** The fee is paid on top, so the watcher's balance measurement is unchanged.
+- **Checked before signing.** The browser decodes the call from chain metadata and accepts exactly two transfers: the intent's amount to the intent's recipient, and the quoted fee to the quoted recipient.
+- **Visible and verifiable.** Quotes list it as a `provider` fee with its `recipient`, it counts against `maxFee`, and the receipt records it as `serviceFee`, so the fee sits inside the hash that is anchored. Receipts from before the fee have no such field and hash exactly as before; the real receipt from block #136917 still re-hashes to its anchored value.
+- **Waived for the relayer.** A transfer to the relayer's own account, like a top-up, pays no fee.
+
+The relayer's EVM address has no Revive mapping, so the fee goes to its fallback account `5GnZaa…`; that account held 81.40 tPOT, the relayer's 81.30 EVM balance plus the 0.1 tPOT existential deposit, which confirmed fees land where anchoring is paid from.
+
+Two real 1 tPOT transfers settled with the fee (intents `0x9add07bd…` and `0xda8ec12e…`): the relayer's balance rose by exactly 0.4 tPOT, and both receipts carry `serviceFee`.
+The landing page now has a fee ledger: the fee, what it has collected from settled transfers, what anchoring has cost (read from each batch transaction's receipt on V3), and the relayer's balance.
+A batch costs the same however many entries it holds, so at 20 transfers a batch the fee covers anchoring in full; at today's testnet volume it covers a small part, and the page says so.
+

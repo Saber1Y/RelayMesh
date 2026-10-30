@@ -178,3 +178,20 @@ The second batch holds two leaves: the receipt of the 80 tPOT relayer top-up, wh
 
 - **In the browser.** `/bridge?deposit=832820-1` on the live site re-hashes the deposit and payout it shows to the anchored fingerprint, computes the bridge leaf, folds the proof and reads `getBatch(root)`: "Anchored on PortalDot V3", a batch of 2 entries, block #252961.
 - **Without RelayMesh code.** The script on `/developers` (viem only) recomputes the 1 tPOT receipt's leaf, folds its proof and finds the root recorded on chain.
+
+## First transfers with the RelayMesh fee (2026-10-30)
+
+Two 1 tPOT transfers signed as `utility.batchAll` of the transfer and a 0.2 tPOT fee to the relayer's account `5GnZaafaf8zhCAC9MSiZqqj1G2AiHQcTMN3AiaWTd1nsqfDT`.
+
+| Intent | Source block, extrinsic | Delivered | Receipt hash |
+| --- | --- | --- | --- |
+| `0x9add07bdac43eb1a0e8a047006cf7571` | #253295, `0xdc5d9fb4a297b5f7cd9bc7512c141c78fdf7128de0679828d1490af7cf1ff7d7` | 0.9 tPOT (a new account keeps the 0.1 tPOT existential deposit) | `0xc5b31915c00cb02ec7698da4a2efde32bc5b4a73ba5eaebe72861b8a8d4a99be` |
+| `0xda8ec12e3c612fde2e807e9b8f3e1e5b` | #253302, `0x6b9941533aa1e1a127ef04caeb229b718d298cf0428ef12575062c74f53c1580` | 1 tPOT | `0x47aceb520f3bd17101eedf6b128ab406c75277f3f5dde8e4c98e58891a21bca1` |
+
+Both receipts are in batch `0xed0d85f8003a04f809f56386739545b707049ebaebccaa0d37ab41ad25d0c782`, transaction `0xca6a4480e88810037bf29d2cc6b968af00e5f71d62937dbb4728e30771db4a99`, EVM block #253608.
+
+### How it was verified
+
+- **The fees reached the relayer.** Its EVM balance went from 81.300813 to 81.700813 tPOT, exactly two fees; its fallback account `5GnZaa…` is the one behind that balance (81.40 tPOT free, the EVM balance plus the 0.1 tPOT existential deposit).
+- **The receipts record the fee.** Both carry `serviceFee: { amount: "20000000000000", recipient: "5GnZaa…" }`, inside the hash that is anchored.
+- **In the browser.** `/verify?intent=0xda8ec12e3c612fde2e807e9b8f3e1e5b` reports "Matches the chain": the leaf folds with one sibling to the root recorded at #253608.

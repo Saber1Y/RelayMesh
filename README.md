@@ -167,6 +167,12 @@ A batch is written when 20 receipts are waiting or the oldest has waited 30 minu
 - Each batch is stored with every leaf and proof before its root is sent, so a crash before or after mining resumes with the same root, read back from the contract.
 - The four receipts already in `IntentRegistry` are never re-batched and still verify there.
 
+### A fee that pays for anchoring
+
+Each transfer pays a small RelayMesh fee (`RELAYMESH_FEE`, 0.2 tPOT on the live server) to the relayer that writes the receipt batches, in the same signed call as the transfer (`utility.batchAll`), so both happen or neither does.
+The recipient still gets the full amount; the browser checks the bundled call before signing; the fee counts against `maxFee` and is recorded in the receipt as `serviceFee`.
+The landing page shows what the fee has collected against what anchoring has cost on chain.
+
 ### API for developers
 
 The **Developers** page ([/developers](https://relaymesh.162-62-231-147.sslip.io/developers)) documents the HTTP API for intents, receipts, anchors and bridge checks, with curl examples and a live call for every GET endpoint.
