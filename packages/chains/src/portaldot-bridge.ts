@@ -99,6 +99,23 @@ const BSC_LOG_SPAN = 49_999n;
 const BSC_MIN_BLOCK_SECONDS = 0.5;
 
 /**
+ * The public BSC endpoint balances requests across nodes, and some of them answer a search of older
+ * blocks with no logs at all (seen on 2026-10-29: the same search came back empty 7 times in 12). A log
+ * that is returned is real, since it names its transaction, so each search is sent several times at
+ * once and the answers merged. Only when every attempt fails is the search an error.
+ */
+const LOG_SEARCH_ATTEMPTS = 6;
+
+async function searchLogs<T extends { transactionHash: Hex; logIndex: number }>(search: () => Promise<T[]>): Promise<T[]> {
+  const answers = await Promise.allSettled(Array.from({ length: LOG_SEARCH_ATTEMPTS }, search));
+  const found = answers.flatMap((a) => (a.status === "fulfilled" ? [a.value] : []));
+  if (found.length === 0) throw (answers[0] as PromiseRejectedResult).reason;
+  const unique = new Map<string, T>();
+  for (const log of found.flat()) unique.set(`${log.transactionHash}:${log.logIndex}`, log);
+  return [...unique.values()];
+}
+
+/**
  * WPOT payouts from the bridge's reserve of exactly `amount`, from the deposit time onwards. Stops at
  * the first match, so a paid-out transfer costs one or two searches; a pending one searches the whole
  * window up to now.
@@ -117,13 +134,15 @@ export async function findBridgePayouts(
   const found: BridgePayout[] = [];
   while (from <= until) {
     const to = from + BSC_LOG_SPAN < until ? from + BSC_LOG_SPAN : until;
-    const logs = await client.getLogs({
-      address: config.bsc.token,
-      event: TRANSFER,
-      args: { from: config.bsc.reserve, ...(query.recipient && { to: query.recipient }) },
-      fromBlock: from,
-      toBlock: to,
-    });
+    const logs = await searchLogs(() =>
+      client.getLogs({
+        address: config.bsc.token,
+        event: TRANSFER,
+        args: { from: config.bsc.reserve, ...(query.recipient && { to: query.recipient }) },
+        fromBlock: from,
+        toBlock: to,
+      }),
+    );
     for (const log of logs) {
       if (log.args.value !== query.amount || !log.args.to) continue;
       const block = await client.getBlock({ blockNumber: log.blockNumber });
