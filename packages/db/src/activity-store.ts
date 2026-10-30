@@ -2,7 +2,7 @@ import { desc, sql } from "drizzle-orm";
 import type { Hex } from "viem";
 import { INTENT_STATUSES, isChainId, type ChainId, type IntentStatus } from "@relaymesh/core";
 import type { Db } from "./client";
-import { intents, receiptBatchAnchors, receiptBatchLeaves, registryAnchors } from "./schema";
+import { intents, quotes, receiptBatchAnchors, receiptBatches, receiptBatchLeaves, registryAnchors } from "./schema";
 
 // Read-only summaries for dashboards. They read the status projection for speed; anything shown as
 // evidence must still come from loadIntent, which replays and verifies the full history.
@@ -80,3 +80,39 @@ export async function countAnchoredReceipts(db: Db): Promise<number> {
   `);
   return Number(row?.count ?? 0);
 }
+
+export interface ServiceFeeTotals {
+  /** Settled transfers that paid RelayMesh's fee. */
+  transfers: number;
+  /** Their fees together, in source-chain base units. */
+  amount: bigint;
+}
+
+/** RelayMesh's fee collected so far: the provider fee with a recipient on each settled intent's selected quote. */
+export async function serviceFeeTotals(db: Db): Promise<ServiceFeeTotals> {
+  const [row] = await db.execute<{ transfers: number; amount: string }>(sql`
+    SELECT count(*)::int AS transfers, coalesce(sum((fee->>'amount')::numeric), 0)::text AS amount
+    FROM ${intents}
+    JOIN ${quotes} ON ${quotes.quoteId} = ${intents.selectedQuoteId}
+    CROSS JOIN LATERAL jsonb_array_elements(${quotes.fees}) AS fee
+    WHERE ${intents.currentStatus} = 'SETTLED' AND fee->>'kind' = 'provider' AND fee ? 'recipient'
+  `);
+  return { transfers: Number(row?.transfers ?? 0), amount: BigInt(row?.amount ?? "0") };
+}
+
+export interface AnchoredBatch {
+  txHash: Hex;
+  leafCount: number;
+}
+
+/** Every batch of this contract with a mined transaction, oldest first. */
+export async function listAnchoredBatches(db: Db, contractAddress: Hex): Promise<AnchoredBatch[]> {
+  const rows = await db
+    .select({ txHash: receiptBatchAnchors.txHash, leafCount: receiptBatches.leafCount })
+    .from(receiptBatchAnchors)
+    .innerJoin(receiptBatches, sql`${receiptBatches.contractAddress} = ${receiptBatchAnchors.contractAddress} AND ${receiptBatches.root} = ${receiptBatchAnchors.root}`)
+    .where(sql`${receiptBatchAnchors.contractAddress} = ${contractAddress}`)
+    .orderBy(receiptBatchAnchors.blockNumber);
+  return rows.map((r) => ({ txHash: r.txHash as Hex, leafCount: r.leafCount }));
+}
+

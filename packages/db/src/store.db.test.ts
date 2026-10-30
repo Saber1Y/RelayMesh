@@ -367,4 +367,35 @@ describe("activity summaries", () => {
     expect(recent.find((r) => r.intentId === b.intent.intentId)?.sourceAmount).toBe(a.intent.source.amount);
     expect(await recentSettlementSeconds(db)).toEqual([19]);
   });
+
+  it("totals RelayMesh's fee over settled transfers only, and keeps the fee's recipient", async () => {
+    const { serviceFeeTotals } = await import("./activity-store");
+    const recipient = "5FHneW46xGXgs5mUiveU4sbTyGBzmstUspZC92UhjJM694ty";
+    const feeOf = (amount: bigint) => ({ kind: "provider" as const, chain: "portaldot-v3-substrate" as const, asset: "native", amount, basis: "quoted" as const, recipient });
+
+    async function settleWith(quote: Quote, settle: boolean) {
+      await recordQuotes(db, quote.intentId, [quote], NOW + 1);
+      await selectQuote(db, quote.intentId, quote.quoteId, NOW + 2, planFor(quote));
+      if (!settle) return;
+      const source: Evidence = { kind: "source_transaction", chain: "portaldot-v3-substrate", method: "substrate_block_extrinsic", txHash: TX_HASH, blockHash: BLOCK_HASH, blockNumber: 10n, finalized: true, observedAt: NOW + 10 };
+      await appendStatusEvent(db, quote.intentId, { status: "SOURCE_SUBMITTED", at: NOW + 10, reason: "in block", evidence: { ...source, finalized: false } });
+      await appendStatusEvent(db, quote.intentId, { status: "SOURCE_CONFIRMED", at: NOW + 20, reason: "final", evidence: source });
+      await appendStatusEvent(db, quote.intentId, { status: "DESTINATION_PENDING", at: NOW + 20, reason: "measuring" });
+      await appendStatusEvent(db, quote.intentId, {
+        status: "SETTLED",
+        at: NOW + 29,
+        reason: "observed",
+        evidence: { kind: "destination_state", chain: "portaldot-v3-evm", method: "evm_balance_delta", amount: 1n, finalized: true, observedAt: NOW + 29 },
+        verificationMode: "destination_rpc_state",
+      });
+    }
+
+    const paid = quoteFor((await newIntent()).intent.intentId, { fees: [...quoteFor(TX_HASH as Hex).fees, feeOf(20_000_000_000_000n)] });
+    await settleWith(paid, true);
+    await settleWith(quoteFor((await newIntent()).intent.intentId, { fees: [...paid.fees.slice(0, 1), feeOf(30_000_000_000_000n)] }), false); // not settled
+    await settleWith(quoteFor((await newIntent()).intent.intentId), true); // settled before the fee existed
+
+    expect(await serviceFeeTotals(db)).toEqual({ transfers: 1, amount: 20_000_000_000_000n });
+    expect((await listQuotes(db, paid.intentId))[0]?.fees[1]).toEqual(feeOf(20_000_000_000_000n));
+  });
 });

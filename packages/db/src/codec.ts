@@ -9,6 +9,7 @@ export interface FeeJson {
   asset: string;
   amount: string;
   basis: Fee["basis"];
+  recipient?: string;
 }
 
 export interface EvidenceJson {
@@ -51,12 +52,14 @@ export function feesFromJson(value: unknown): Fee[] {
     const fee = raw as Partial<FeeJson>;
     if (!fee || !["network", "provider", "storage_deposit"].includes(fee.kind ?? "")) corrupt("fee kind");
     if (!["estimate", "quoted"].includes(fee.basis ?? "") || typeof fee.asset !== "string") corrupt("fee");
+    if (fee.recipient !== undefined && typeof fee.recipient !== "string") corrupt("fee recipient");
     return {
       kind: fee.kind as Fee["kind"],
       chain: toChainId(fee.chain, "fee chain"),
       asset: fee.asset,
       amount: toBigInt(fee.amount, "fee amount"),
       basis: fee.basis as Fee["basis"],
+      ...(fee.recipient !== undefined && { recipient: fee.recipient }),
     };
   });
 }
