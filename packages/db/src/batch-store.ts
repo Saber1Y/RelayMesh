@@ -1,8 +1,8 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import type { Hex } from "viem";
-import { batchLeaf, RelayMeshError, verifyMerkleProof } from "@relaymesh/core";
+import { batchLeaf, bridgeCheckLeaf, RelayMeshError, verifyMerkleProof } from "@relaymesh/core";
 import type { Db } from "./client";
-import { intents, receiptBatchAnchors, receiptBatches, receiptBatchLeaves, registryAnchors, statusEvents } from "./schema";
+import { bridgeBatchLeaves, intents, receiptBatchAnchors, receiptBatches, receiptBatchLeaves, registryAnchors, statusEvents } from "./schema";
 
 const HEX32 = /^0x[0-9a-f]{64}$/;
 
@@ -42,12 +42,21 @@ export interface ReceiptBatchLeaf {
   proof: Hex[];
 }
 
+export interface BridgeBatchLeaf {
+  checkHash: Hex;
+  leafHash: Hex;
+  /** Sibling hashes from the leaf up to the root. */
+  proof: Hex[];
+}
+
 export interface ReceiptBatchPlan {
   contractAddress: Hex;
   chainId: number;
   root: Hex;
   createdAt: number;
   leaves: ReceiptBatchLeaf[];
+  /** Verified bridge transfers anchored in the same batch, alongside the receipts. */
+  bridgeLeaves?: BridgeBatchLeaf[];
 }
 
 /**
@@ -56,7 +65,16 @@ export interface ReceiptBatchPlan {
  * an integrity error and is never stored. Re-planning the identical batch is a no-op.
  */
 export async function planReceiptBatch(db: Db, plan: ReceiptBatchPlan): Promise<void> {
-  if (plan.leaves.length === 0) throw new RelayMeshError("INVALID_BATCH", "A batch needs at least one leaf");
+  const bridgeLeaves = plan.bridgeLeaves ?? [];
+  if (plan.leaves.length + bridgeLeaves.length === 0) throw new RelayMeshError("INVALID_BATCH", "A batch needs at least one leaf");
+  for (const leaf of bridgeLeaves) {
+    if (bridgeCheckLeaf(leaf.checkHash) !== leaf.leafHash) {
+      throw new RelayMeshError("INTEGRITY_ERROR", `Leaf of bridge check ${leaf.checkHash} does not commit to its check hash`);
+    }
+    if (!verifyMerkleProof(leaf.leafHash, leaf.proof, plan.root)) {
+      throw new RelayMeshError("INTEGRITY_ERROR", `Proof of bridge check ${leaf.checkHash} does not lead to root ${plan.root}`);
+    }
+  }
   for (const leaf of plan.leaves) {
     if (batchLeaf(leaf.intentHash, leaf.receiptHash) !== leaf.leafHash) {
       throw new RelayMeshError("INTEGRITY_ERROR", `Leaf of ${leaf.intentId} does not commit to its intent and receipt hashes`);
@@ -68,11 +86,16 @@ export async function planReceiptBatch(db: Db, plan: ReceiptBatchPlan): Promise<
   await db.transaction(async (tx) => {
     const inserted = await tx
       .insert(receiptBatches)
-      .values({ contractAddress: plan.contractAddress, chainId: plan.chainId, root: plan.root, leafCount: plan.leaves.length, createdAt: plan.createdAt })
+      .values({ contractAddress: plan.contractAddress, chainId: plan.chainId, root: plan.root, leafCount: plan.leaves.length + bridgeLeaves.length, createdAt: plan.createdAt })
       .onConflictDoNothing()
       .returning({ root: receiptBatches.root });
     if (inserted.length === 0) return;
-    await tx.insert(receiptBatchLeaves).values(plan.leaves.map((leaf) => ({ ...leaf, contractAddress: plan.contractAddress, batchRoot: plan.root })));
+    if (plan.leaves.length > 0) {
+      await tx.insert(receiptBatchLeaves).values(plan.leaves.map((leaf) => ({ ...leaf, contractAddress: plan.contractAddress, batchRoot: plan.root })));
+    }
+    if (bridgeLeaves.length > 0) {
+      await tx.insert(bridgeBatchLeaves).values(bridgeLeaves.map((leaf) => ({ ...leaf, contractAddress: plan.contractAddress, batchRoot: plan.root })));
+    }
   });
 }
 
@@ -132,7 +155,7 @@ export interface ReceiptBatchProof {
   blockNumber: bigint;
 }
 
-function proofOf(value: unknown): Hex[] {
+export function proofOf(value: unknown): Hex[] {
   if (!Array.isArray(value) || !value.every((v): v is Hex => typeof v === "string" && HEX32.test(v))) {
     throw new RelayMeshError("INTEGRITY_ERROR", "Stored batch proof is malformed");
   }

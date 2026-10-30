@@ -19,7 +19,7 @@ const { db, close } = connectDb(process.env.TEST_DATABASE_URL as string, { max: 
 afterAll(() => close());
 beforeEach(async () => {
   await db.execute(
-    sql`TRUNCATE receipt_batch_anchors, receipt_batch_leaves, receipt_batches, watcher_cursors, registry_anchors, execution_plans, status_events, idempotency_records, quotes, intents`,
+    sql`TRUNCATE bridge_batch_leaves, bridge_checks, receipt_batch_anchors, receipt_batch_leaves, receipt_batches, watcher_cursors, registry_anchors, execution_plans, status_events, idempotency_records, quotes, intents`,
   );
 });
 

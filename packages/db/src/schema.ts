@@ -291,3 +291,57 @@ export const receiptBatchAnchors = pgTable(
     check("receipt_batch_anchors_block_nonnegative", sql`${t.blockNumber} >= 0`),
   ],
 );
+
+/**
+ * A PortalDot bridge transfer RelayMesh verified on both chains (Portaldot mainnet deposit, BSC payout),
+ * with the exact facts its check hash covers, so anyone can re-hash them. One per deposit. Append-only.
+ */
+export const bridgeChecks = pgTable(
+  "bridge_checks",
+  {
+    checkHash: text("check_hash").primaryKey(),
+    /** The deposit's extrinsic on Portaldot mainnet, as block-index. */
+    depositId: text("deposit_id").notNull(),
+    payoutTxHash: text("payout_tx_hash").notNull(),
+    /** The deposit and payout exactly as hashed (see @relaymesh/core bridgeCheckFacts). */
+    facts: jsonb("facts").notNull(),
+    /** When RelayMesh verified it, in unix seconds. */
+    checkedAt: unixSeconds("checked_at").notNull(),
+    insertedAt: insertedAt(),
+  },
+  (t) => [
+    unique("bridge_checks_deposit_key").on(t.depositId),
+    check("bridge_checks_check_hash_hex", hex(t.checkHash, 32)),
+    check("bridge_checks_payout_tx_hash_hex", hex(t.payoutTxHash, 32)),
+    check("bridge_checks_deposit_id_format", sql`${t.depositId} ~ '^[0-9]+-[0-9]+$'`),
+    check("bridge_checks_facts_object", sql`jsonb_typeof(${t.facts}) = 'object'`),
+  ],
+);
+
+/** One verified bridge transfer's leaf in a batch, with its proof up to the root. Append-only. */
+export const bridgeBatchLeaves = pgTable(
+  "bridge_batch_leaves",
+  {
+    contractAddress: text("contract_address").notNull(),
+    batchRoot: text("batch_root").notNull(),
+    checkHash: text("check_hash")
+      .notNull()
+      .references(() => bridgeChecks.checkHash),
+    leafHash: text("leaf_hash").notNull(),
+    /** Sibling hashes from the leaf up to the root (see @relaymesh/core merkle.ts). */
+    proof: jsonb("proof").notNull(),
+    insertedAt: insertedAt(),
+  },
+  (t) => [
+    // A bridge check is anchored at most once per contract.
+    primaryKey({ name: "bridge_batch_leaves_pkey", columns: [t.contractAddress, t.checkHash] }),
+    foreignKey({
+      name: "bridge_batch_leaves_batch_fk",
+      columns: [t.contractAddress, t.batchRoot],
+      foreignColumns: [receiptBatches.contractAddress, receiptBatches.root],
+    }),
+    unique("bridge_batch_leaves_leaf_key").on(t.contractAddress, t.batchRoot, t.leafHash),
+    check("bridge_batch_leaves_leaf_hash_hex", hex(t.leafHash, 32)),
+    check("bridge_batch_leaves_proof_array", sql`jsonb_typeof(${t.proof}) = 'array'`),
+  ],
+);
