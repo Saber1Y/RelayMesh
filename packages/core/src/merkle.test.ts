@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { keccak256, stringToBytes, type Hex } from "viem";
 import { hashCanonical } from "./canonical";
-import { BATCH_NODE_DOMAIN, batchLeaf, buildMerkleTree, merkleProof, merkleRootFromProof, verifyMerkleProof } from "./merkle";
+import { BATCH_NODE_DOMAIN, batchLeaf, bridgeCheckLeaf, buildMerkleTree, merkleProof, merkleRootFromProof, verifyMerkleProof } from "./merkle";
 
 const hash = (n: number) => keccak256(stringToBytes(`value-${n}`));
 const leaves = (count: number) => Array.from({ length: count }, (_, i) => batchLeaf(hash(i), hash(1_000 + i)));
@@ -94,5 +94,22 @@ describe("merkle proofs", () => {
     const [leaf] = leaves(1) as [Hex];
     expect(verifyMerkleProof(leaf, ["0xnope" as Hex], leaf)).toBe(false);
     expect(verifyMerkleProof(leaf, [], "0x00" as Hex)).toBe(false);
+  });
+});
+
+describe("bridge check leaves", () => {
+  it("never collide with a receipt leaf built from the same hash", () => {
+    const h = hash(7);
+    expect(bridgeCheckLeaf(h)).not.toBe(batchLeaf(h, h));
+  });
+
+  it("share a tree and proofs with receipt leaves", () => {
+    const mixed = [...leaves(3), bridgeCheckLeaf(hash(42))];
+    const tree = buildMerkleTree(mixed);
+    expect(verifyMerkleProof(bridgeCheckLeaf(hash(42)), merkleProof(tree, bridgeCheckLeaf(hash(42))), tree.root)).toBe(true);
+  });
+
+  it("reject a check hash that is not lowercase 32-byte hex", () => {
+    expect(() => bridgeCheckLeaf("0xABC" as Hex)).toThrow(/checkHash/);
   });
 });

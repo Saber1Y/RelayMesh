@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Hex } from "viem";
-import { assessBridgeTransfer, expectedPayout, hashBridgeCheck, parseDepositId, type BridgeDeposit, type BridgePayout } from "./bridge";
+import { assessBridgeTransfer, BRIDGE_CHECK_DOMAIN, bridgeCheckFacts, expectedPayout, hashBridgeCheck, parseDepositId, type BridgeDeposit, type BridgePayout } from "./bridge";
+import { hashCanonical } from "./canonical";
 
 const BRIDGE = "5DFSpdFBFU1eXYUKf6887djpFAhrEuzgUEDHHb9ksi2javoo";
 const FEE = { feeBps: 300, sourceDecimals: 14, targetDecimals: 18 };
@@ -108,5 +109,13 @@ describe("hashBridgeCheck", () => {
   it("is stable for the same facts and changes with any of them", () => {
     expect(hashBridgeCheck(deposit(), payout())).toBe(hashBridgeCheck(deposit(), payout()));
     expect(hashBridgeCheck(deposit(), payout({ amount: 1n }))).not.toBe(hashBridgeCheck(deposit(), payout()));
+  });
+});
+
+describe("bridgeCheckFacts", () => {
+  it("is plain JSON that re-hashes to the check hash", () => {
+    const facts = bridgeCheckFacts(deposit(), payout());
+    expect(JSON.parse(JSON.stringify(facts))).toEqual(facts);
+    expect(hashCanonical(BRIDGE_CHECK_DOMAIN, facts)).toBe(hashBridgeCheck(deposit(), payout()));
   });
 });

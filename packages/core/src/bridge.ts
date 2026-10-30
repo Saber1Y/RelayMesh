@@ -128,10 +128,16 @@ export function assessBridgeTransfer(input: {
   return { verdict, expected, payout, problems };
 }
 
+/**
+ * The facts a bridge check commits to, as plain JSON (bigints as decimal strings). This is what is
+ * stored and what anyone re-hashes: canonical JSON writes a bigint and its decimal string identically.
+ */
+export function bridgeCheckFacts(deposit: BridgeDeposit, payout: BridgePayout | null): Record<string, unknown> {
+  const plain = (value: unknown): unknown => JSON.parse(JSON.stringify(value, (_k, v: unknown) => (typeof v === "bigint" ? v.toString() : v)));
+  return plain({ deposit: { ...deposit, id: `${deposit.id.block}-${deposit.id.index}` }, payout }) as Record<string, unknown>;
+}
+
 /** A stable fingerprint of a bridge check's facts, in the same canonical form as RelayMesh receipts. */
 export function hashBridgeCheck(deposit: BridgeDeposit, payout: BridgePayout | null): Hex {
-  return hashCanonical(BRIDGE_CHECK_DOMAIN, {
-    deposit: { ...deposit, id: `${deposit.id.block}-${deposit.id.index}` },
-    payout,
-  });
+  return hashCanonical(BRIDGE_CHECK_DOMAIN, bridgeCheckFacts(deposit, payout));
 }

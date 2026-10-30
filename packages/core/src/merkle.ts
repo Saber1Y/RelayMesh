@@ -7,7 +7,8 @@ import { RelayMeshError } from "./errors";
  * its own leaf and proof, and anyone can recompute the leaf from the receipt and fold the proof up to
  * the root read from the chain.
  *
- * - Leaf: hashCanonical("relaymesh.batch.leaf.v1", { intentHash, receiptHash }).
+ * - Leaf: hashCanonical("relaymesh.batch.leaf.v1", { intentHash, receiptHash }) for a receipt, or
+ *   hashCanonical("relaymesh.batch.bridge.v1", { checkHash }) for a verified bridge transfer.
  * - Node: hashCanonical("relaymesh.batch.node.v1", [a, b]) with a <= b (sorted-pair hashing), so a
  *   proof is just the sibling hashes, bottom up, with no left/right flags.
  * - Leaves and nodes use different domains, so a node can never be presented as a leaf.
@@ -17,6 +18,7 @@ import { RelayMeshError } from "./errors";
 
 export const BATCH_LEAF_DOMAIN = "relaymesh.batch.leaf.v1";
 export const BATCH_NODE_DOMAIN = "relaymesh.batch.node.v1";
+export const BATCH_BRIDGE_LEAF_DOMAIN = "relaymesh.batch.bridge.v1";
 
 const HEX32 = /^0x[0-9a-f]{64}$/;
 
@@ -29,6 +31,11 @@ function checkHash(value: string, what: string): Hex {
 /** The leaf committing one intent to its receipt. */
 export function batchLeaf(intentHash: Hex, receiptHash: Hex): Hex {
   return hashCanonical(BATCH_LEAF_DOMAIN, { intentHash: checkHash(intentHash, "intentHash"), receiptHash: checkHash(receiptHash, "receiptHash") });
+}
+
+/** The leaf committing one verified bridge transfer, by the hash of its check (see bridge.ts). */
+export function bridgeCheckLeaf(bridgeCheckHash: Hex): Hex {
+  return hashCanonical(BATCH_BRIDGE_LEAF_DOMAIN, { checkHash: checkHash(bridgeCheckHash, "checkHash") });
 }
 
 function hashPair(a: Hex, b: Hex): Hex {
