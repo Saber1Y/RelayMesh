@@ -84,10 +84,12 @@ export interface DecodedCall {
   section: string;
   method: string;
   args: Record<string, string>;
+  /** For utility.batchAll, the calls it bundles, each decoded the same way. */
+  calls?: DecodedCall[];
 }
 
 /** Decodes the plan's call bytes with the live chain metadata, independently of what the server described. */
-export async function decodeCall(wsUrl: string, callHex: Hex): Promise<DecodedCall> {
+export async function decodeCall(wsUrl: string, callHex: Hex | Uint8Array): Promise<DecodedCall> {
   const api = await getBrowserApi(wsUrl);
   const call = api.createType("Call", callHex);
   const args: Record<string, string> = {};
@@ -96,6 +98,11 @@ export async function decodeCall(wsUrl: string, callHex: Hex): Promise<DecodedCa
     const human = value?.toHuman();
     args[arg.name.toString()] = typeof human === "string" ? human : JSON.stringify(human);
   });
+  if (call.section === "utility" && call.method === "batchAll") {
+    const inner = [...(call.args[0] as unknown as Iterable<{ toU8a(): Uint8Array }>)];
+    const calls = await Promise.all(inner.map((c) => decodeCall(wsUrl, c.toU8a())));
+    return { section: call.section, method: call.method, args: {}, calls };
+  }
   return { section: call.section, method: call.method, args };
 }
 

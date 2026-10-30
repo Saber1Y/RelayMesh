@@ -112,7 +112,8 @@ export function QuotesPanel({
         {live.length > 0 && (
           <ol className="grid gap-3">
             {live.map((q, index) => {
-              const fee = q.fees.find((f) => f.chain === view.intent.source.chain);
+              const fee = q.fees.find((f) => f.kind === "network" && f.chain === view.intent.source.chain);
+              const serviceFee = q.fees.find((f) => f.kind === "provider" && f.recipient);
               const selected = view.selectedQuoteId === q.quoteId;
               return (
                 <li
@@ -134,9 +135,14 @@ export function QuotesPanel({
                     <Stat label="You receive on the EVM side" emphasis>
                       {formatAmount(q.expectedOutput, view.intent.destination.chain)}
                     </Stat>
-                    <Stat label="Network fee">
+                    <Stat label={serviceFee ? "Fees" : "Network fee"}>
                       <Mono>{fee ? formatAmount(fee.amount, fee.chain) : "None reported"}</Mono>
-                      {fee?.basis === "estimate" && <span className="ml-1 text-muted">est.</span>}
+                      {fee?.basis === "estimate" && <span className="ml-1 text-muted">network, est.</span>}
+                      {serviceFee && (
+                        <span className="block">
+                          <Mono>+ {formatAmount(serviceFee.amount, serviceFee.chain)}</Mono> <span className="text-muted">RelayMesh</span>
+                        </span>
+                      )}
                     </Stat>
                     <Stat label="Time to finality">{q.estimatedSeconds ? `about ${q.estimatedSeconds}s` : "Not reported"}</Stat>
                   </dl>

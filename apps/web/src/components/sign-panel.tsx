@@ -39,15 +39,43 @@ function sameAccount(a: string, b: string): boolean {
   }
 }
 
-/** Checks the browser-decoded call against the intent, so a wrong plan from the server is caught before signing. */
-function checkCall(decoded: DecodedCall, view: WireView, plan: Wire<ExecutionPlanRecord>): { ok: boolean; problems: string[] } {
+/** RelayMesh's fee on the plan's quote, as the quote states it: paid to `recipient` in the same call. */
+function quotedServiceFee(view: WireView, plan: Wire<ExecutionPlanRecord>): { amount: string; recipient: string } | null {
+  const fee = view.quotes.find((q) => q.quoteId === plan.quoteId)?.fees.find((f) => f.kind === "provider" && f.recipient);
+  return fee?.recipient ? { amount: fee.amount, recipient: fee.recipient } : null;
+}
+
+/** Problems with one decoded balances.transferKeepAlive against the account and amount it should carry. */
+function transferProblems(call: DecodedCall | undefined, account: string, amount: string, what: string): string[] {
+  if (!call || call.section !== "balances" || call.method !== "transferKeepAlive") return [`The ${what} is not a balances.transferKeepAlive`];
   const problems: string[] = [];
-  if (decoded.section !== "balances" || decoded.method !== "transferKeepAlive") problems.push(`Unexpected call ${decoded.section}.${decoded.method}`);
-  const value = decoded.args.value?.replace(/[^0-9]/g, "");
-  if (value !== view.intent.source.amount) problems.push("The amount in the call does not match the intent");
-  const dest = decoded.args.dest ?? "";
-  if (!dest.includes(plan.destinationAccount)) problems.push("The destination in the call does not match the plan");
+  if (call.args.value?.replace(/[^0-9]/g, "") !== amount) problems.push(`The amount of the ${what} does not match`);
+  if (!sameAccount(call.args.dest?.replace(/^\{"Id":"|"\}$/g, "") ?? "", account)) problems.push(`The destination of the ${what} does not match`);
+  return problems;
+}
+
+/**
+ * Checks the browser-decoded call against the intent, so a wrong plan from the server is caught before
+ * signing: exactly the transfer, plus RelayMesh's fee as quoted when there is one, and nothing else.
+ */
+function checkCall(decoded: DecodedCall, view: WireView, plan: Wire<ExecutionPlanRecord>): { ok: boolean; problems: string[] } {
+  const fee = quotedServiceFee(view, plan);
+  if (!fee) return finish(transferProblems(decoded, plan.destinationAccount, view.intent.source.amount, "transfer"));
+  if (decoded.section !== "utility" || decoded.method !== "batchAll" || decoded.calls?.length !== 2) {
+    return finish(["Expected utility.batchAll of the transfer and RelayMesh's fee"]);
+  }
+  return finish([
+    ...transferProblems(decoded.calls[0], plan.destinationAccount, view.intent.source.amount, "transfer"),
+    ...transferProblems(decoded.calls[1], fee.recipient, fee.amount, "RelayMesh fee"),
+  ]);
+}
+
+function finish(problems: string[]): { ok: boolean; problems: string[] } {
   return { ok: problems.length === 0, problems };
+}
+
+function callText(call: DecodedCall): string {
+  return `${call.section}.${call.method}(${Object.entries(call.args).map(([k, v], i) => `${i ? ", " : ""}${k}: ${v}`).join("")})`;
 }
 
 async function reportInclusion(intentId: string, txHash: Hex, blockHash: Hex): Promise<void> {
@@ -103,6 +131,7 @@ export function SignPanel({
   }, [wsUrl, plan.callHex, attempt]);
 
   const check = decoded.state === "ok" ? checkCall(decoded.call, view, plan) : undefined;
+  const serviceFee = quotedServiceFee(view, plan);
   const remaining = plan.submitBefore - now;
   const expired = remaining <= 0;
   const busy = phase.kind !== "idle" && phase.kind !== "error";
@@ -155,6 +184,15 @@ export function SignPanel({
               <Mono>{formatAmount(plan.estimatedFee, view.intent.source.chain)}</Mono> <span className="text-muted">estimate</span>
             </dd>
           </div>
+          {serviceFee && (
+            <div className="grid gap-1">
+              <dt className="text-muted">RelayMesh fee</dt>
+              <dd>
+                <Mono>{formatAmount(serviceFee.amount, view.intent.source.chain)}</Mono>
+                <span className="block text-muted">pays to anchor your receipt on PortalDot V3</span>
+              </dd>
+            </div>
+          )}
           <div className="grid gap-1">
             <dt className="text-muted">Sign before</dt>
             <dd className={remaining <= 15 ? "text-critical" : ""}>{expired ? "Expired" : `${formatDuration(remaining)} left`}</dd>
@@ -184,7 +222,21 @@ export function SignPanel({
           {decoded.state === "ok" && (
             <>
               <Mono className="block rounded-lg bg-surface px-3 py-2.5 text-[12.5px] leading-relaxed break-all shadow-[0_1px_0_rgb(20_32_72/0.03)]">
-                {decoded.call.section}.{decoded.call.method}({Object.entries(decoded.call.args).map(([k, v], i) => `${i ? ", " : ""}${k}: ${v}`)})
+                {decoded.call.calls ? (
+                  <>
+                    {decoded.call.section}.{decoded.call.method}([
+                    {decoded.call.calls.map((c, i) => (
+                      <span key={i} className="block pl-4">
+                        {callText(c)}
+                        {i === 0 ? ", " : ""}
+                        <span className="text-muted">{i === 0 ? " // your transfer" : " // RelayMesh fee"}</span>
+                      </span>
+                    ))}
+                    ])
+                  </>
+                ) : (
+                  callText(decoded.call)
+                )}
               </Mono>
               <p className={`flex items-start gap-2 text-sm ${check?.ok ? "text-positive" : "text-critical"}`}>
                 {check?.ok ? <CheckCircle size={16} className="mt-0.5 shrink-0" /> : <WarningCircle size={16} className="mt-0.5 shrink-0" />}
