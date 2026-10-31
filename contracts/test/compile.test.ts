@@ -14,11 +14,11 @@ const byName = (name: string) => {
 describe("contract compilation", () => {
   it("compiles every contract without warnings", () => {
     expect(warnings).toEqual([]);
-    expect(contracts.map((c) => c.contractName)).toEqual(expect.arrayContaining(["IntentRegistry", "ReceiptBatchRegistry", "ReceiptBatchRegistryChecks"]));
+    expect(contracts.map((c) => c.contractName)).toEqual(expect.arrayContaining(["IntentRegistry", "ReceiptBatchRegistry", "ReceiptBatchRegistryChecks", "ReceiptBatchLog", "ReceiptBatchLogChecks"]));
   });
 
   it("keeps the committed typed ABIs in step with the sources", () => {
-    for (const name of ["IntentRegistry", "ReceiptBatchRegistry"]) {
+    for (const name of ["IntentRegistry", "ReceiptBatchRegistry", "ReceiptBatchLog"]) {
       expect(readFileSync(join(CONTRACTS_ROOT, "abi", `${name}.ts`), "utf8"), `abi/${name}.ts is stale: run pnpm compile`).toBe(typedAbiSource(byName(name)));
     }
   });
@@ -29,6 +29,12 @@ describe("contract compilation", () => {
     expect(names).toEqual(
       expect.arrayContaining(["function:recordBatch", "function:getBatch", "function:recorder", "event:BatchRecorded", "error:NotRecorder", "error:BatchAlreadyRecorded"]),
     );
+  });
+
+  it("emits the same BatchRecorded event from both batch contracts, so one decoder reads either", () => {
+    const event = (name: string) => byName(name).abi.find((item) => item.type === "event" && item.name === "BatchRecorded");
+    expect(event("ReceiptBatchLog")).toEqual(event("ReceiptBatchRegistry"));
+    expect(byName("ReceiptBatchLog").abi.some((item) => "name" in item && item.name === "getBatch")).toBe(false);
   });
 
   it("places the recorder in the runtime code exactly where solc reports the immutable", () => {
