@@ -3,7 +3,7 @@
 import { ArrowRight, CaretDown, Wallet } from "@phosphor-icons/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
-import { normalizeAddress, parseDecimalAmount } from "@relaymesh/core";
+import { formatBaseUnits, normalizeAddress, parseDecimalAmount } from "@relaymesh/core";
 import { ApiRequestError, apiFetch } from "@/lib/api";
 import { shortHash } from "@/lib/format";
 import { connectWallets, type WalletAccount } from "@/lib/wallet";
@@ -20,6 +20,45 @@ type FieldName = "source" | "recipient" | "amount" | "deadline" | "minReceived" 
 type Errors = Partial<Record<FieldName, string>>;
 
 const DEADLINES = [10, 30, 60] as const;
+
+type Balance = { state: "none" } | { state: "loading" } | { state: "ok"; free: bigint; spendable: bigint } | { state: "error" };
+
+/** Rounded down to 4 decimals, so a balance is never shown as more than the account holds. */
+function tpot(value: bigint): string {
+  const [whole = "0", fraction = ""] = formatBaseUnits(value, 14).split(".");
+  const shown = fraction.slice(0, 4).replace(/0+$/, "");
+  return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${shown ? `.${shown}` : ""} tPOT`;
+}
+
+/** The source account's balance on V3, read through the server; re-read when the account changes and every 20 s. */
+function useBalance(source: string): Balance {
+  const [balance, setBalance] = useState<Balance>({ state: "none" });
+  useEffect(() => {
+    let address: string;
+    try {
+      address = normalizeAddress("portaldot-v3-substrate", source);
+    } catch {
+      setBalance({ state: "none" });
+      return;
+    }
+    let live = true;
+    const read = () =>
+      apiFetch<{ free: string; spendable: string }>(`/api/accounts/${encodeURIComponent(address)}/balance`).then(
+        (b) => live && setBalance({ state: "ok", free: BigInt(b.free), spendable: BigInt(b.spendable) }),
+        () => live && setBalance((prev) => (prev.state === "ok" ? prev : { state: "error" })),
+      );
+    setBalance({ state: "loading" });
+    // A short wait so typing an address by hand does not send a request per keystroke.
+    const first = setTimeout(read, 300);
+    const every = setInterval(read, 20_000);
+    return () => {
+      live = false;
+      clearTimeout(first);
+      clearInterval(every);
+    };
+  }, [source]);
+  return balance;
+}
 const SERVER_FIELD: Record<string, FieldName> = {
   requester: "source",
   "destination.recipient": "recipient",
@@ -90,6 +129,16 @@ export function IntentForm() {
   useEffect(() => {
     idempotencyKey.current = `web-${crypto.randomUUID()}`;
   }, [source, recipient, amount, deadlineMinutes, minReceived, maxFee]);
+
+  const balance = useBalance(source);
+  const overSpendable = useMemo(() => {
+    if (balance.state !== "ok") return false;
+    try {
+      return parseDecimalAmount(amount, 14) > balance.spendable;
+    } catch {
+      return false;
+    }
+  }, [amount, balance]);
 
   const substrateAccounts = useMemo(() => (wallet.status === "connected" ? wallet.accounts.filter((a) => a.kind === "substrate") : []), [wallet]);
   const evmAccounts = useMemo(() => (wallet.status === "connected" ? wallet.accounts.filter((a) => a.kind === "ethereum") : []), [wallet]);
@@ -237,6 +286,21 @@ export function IntentForm() {
             {manualSource ? "Addresses from any Substrate network format are accepted and shown in PortalDot format." : "The account that signs and pays the network fee."}
           </p>
         )}
+        {balance.state !== "none" && (
+          <p className="flex flex-wrap items-baseline gap-x-2 rounded-lg bg-raised/60 px-3 py-2 text-sm" aria-live="polite">
+            <span className="text-muted">Balance</span>
+            {balance.state === "loading" && <span className="text-muted">Reading from V3…</span>}
+            {balance.state === "error" && <span className="text-caution">Could not read it from V3 right now</span>}
+            {balance.state === "ok" && (
+              <>
+                <span className="font-mono font-medium tabular-nums">{tpot(balance.free)}</span>
+                <span className="text-muted">
+                  · <span className="font-mono tabular-nums text-ink">{tpot(balance.spendable)}</span> spendable
+                </span>
+              </>
+            )}
+          </p>
+        )}
       </div>
 
       <Field label="To (EVM address)" htmlFor={fid("recipient")} error={errors.recipient} help="Funds arrive in the account Revive maps to this address.">
@@ -268,7 +332,18 @@ export function IntentForm() {
       </Field>
 
       <div className="grid items-start gap-6 sm:grid-cols-[minmax(0,1fr)_auto]">
-        <Field label="Amount" htmlFor={fid("amount")} error={errors.amount} help="In tPOT, sent from the source account.">
+        <Field
+          label="Amount"
+          htmlFor={fid("amount")}
+          error={errors.amount}
+          help={
+            overSpendable && balance.state === "ok" ? (
+              <span className="text-caution">More than this account can spend ({tpot(balance.spendable)}), before fees.</span>
+            ) : (
+              "In tPOT, sent from the source account."
+            )
+          }
+        >
           <div className="relative">
             <input
               id={fid("amount")}
