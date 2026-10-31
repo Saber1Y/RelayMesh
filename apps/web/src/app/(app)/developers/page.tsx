@@ -6,7 +6,7 @@ import { CopyButton } from "@/components/copy-button";
 import { PageShell } from "@/components/page-shell";
 import { TryEndpoint } from "@/components/try-endpoint";
 import { Mono, stagger } from "@/components/ui";
-import { batchRegistryAddress, getDb, v3Config } from "@/server/services";
+import { batchRegistryAddress, getDb, nowSeconds, v3Config } from "@/server/services";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
@@ -32,7 +32,7 @@ interface Endpoint {
   curl: string;
 }
 
-function endpoints(base: string, intentId: string): { id: string; title: string; intro: ReactNode; items: Endpoint[] }[] {
+function endpoints(base: string, intentId: string, deadline: number): { id: string; title: string; intro: ReactNode; items: Endpoint[] }[] {
   return [
     {
       id: "intents",
@@ -52,33 +52,41 @@ function endpoints(base: string, intentId: string): { id: string; title: string;
   "requester": "5EeRe5byF4PndSAwaESnGPLjZf5zoSnbFS7faZ251tYUZdP7",
   "source": { "chain": "portaldot-v3-substrate", "asset": "native", "amount": "100000000000000" },
   "destination": { "chain": "portaldot-v3-evm", "asset": "native", "recipient": "0x3F5b96A494061F7338Da529e3047809Ac6a7FB84" },
-  "constraints": { "deadline": 1793312767 }
+  "constraints": { "deadline": ${deadline} }
 }`,
           notes: (
             <>
-              Amounts are base-unit strings (tPOT has 14 decimals on the Substrate side), times are unix seconds. Answers <Mono>201</Mono> with{" "}
-              <Mono>{"{ intentId, replayed: false }"}</Mono>, or <Mono>200</Mono> with <Mono>replayed: true</Mono> for a repeat of the same key and body.
+              Save the body as <Mono>intent.json</Mono>, with your own addresses. Amounts are base-unit strings (tPOT has 14 decimals on the Substrate side); the{" "}
+              <Mono>deadline</Mono> is unix seconds, at least 60 s ahead (the one shown is 15 minutes from when this page loaded). Answers <Mono>201</Mono> with{" "}
+              <Mono>{"{ intentId, replayed: false }"}</Mono>, or <Mono>200</Mono> with <Mono>replayed: true</Mono> for a repeat of the same key and body. The steps
+              below use it as <Mono>$INTENT</Mono>.
             </>
           ),
-          curl: `curl -X POST ${base}/api/intents \\
+          curl: `BASE=${base}
+INTENT=$(curl -s -X POST $BASE/api/intents \\
   -H 'content-type: application/json' \\
   -H "idempotency-key: $(uuidgen)" \\
-  -d @intent.json`,
+  -d @intent.json | jq -r .intentId)`,
         },
         {
           method: "POST",
           path: "/api/intents/{intentId}/quotes",
           summary: "Ask every route provider for a fresh quote. Rejections come back too, each with its reason, so a client can say why a route is unavailable.",
-          curl: `curl -X POST ${base}/api/intents/${intentId}/quotes`,
+          notes: (
+            <>
+              Quotes hold for 2 minutes. An intent can be quoted while it is a draft, quoted or awaiting a signature; later steps answer <Mono>409</Mono>.
+            </>
+          ),
+          curl: `QUOTE=$(curl -s -X POST $BASE/api/intents/$INTENT/quotes | jq -r '.quotes[0].quoteId')`,
         },
         {
           method: "POST",
           path: "/api/intents/{intentId}/execution",
           summary: "Select a quote and get the unsigned call for the wallet. The provider re-reads chain state first, so a plan is never issued for a quote that no longer holds.",
           body: `{ "quoteId": "portaldot-v3-native-…" }`,
-          curl: `curl -X POST ${base}/api/intents/${intentId}/execution \\
+          curl: `curl -s -X POST $BASE/api/intents/$INTENT/execution \\
   -H 'content-type: application/json' \\
-  -d '{"quoteId":"…"}'`,
+  -d "{\\"quoteId\\":\\"$QUOTE\\"}"`,
         },
         {
           method: "POST",
@@ -87,11 +95,11 @@ function endpoints(base: string, intentId: string): { id: string; title: string;
           body: `{ "txHash": "0x…", "blockHash": "0x…" }`,
           notes: (
             <>
-              From here the watcher takes over: it waits for finality, measures the recipient’s balance at that block, then marks the intent <Mono>SETTLED</Mono> or flags it
-              for review.
+              Answers <Mono>422</Mono> when the block or extrinsic is not found, or is not the planned call signed by the requester. From here the watcher takes over: it
+              waits for finality, measures the recipient’s balance at that block, then marks the intent <Mono>SETTLED</Mono> or flags it for review.
             </>
           ),
-          curl: `curl -X POST ${base}/api/intents/${intentId}/source \\
+          curl: `curl -s -X POST $BASE/api/intents/$INTENT/source \\
   -H 'content-type: application/json' \\
   -d '{"txHash":"0x…","blockHash":"0x…"}'`,
         },
@@ -280,7 +288,7 @@ export default async function DevelopersPage() {
               </Basic>
               <Basic term="Errors">
                 <Mono className="mb-1 block">{'{ "error": { "code", "message", "field"? } }'}</Mono>
-                With a matching HTTP status: 400 for bad input, 404 when not found, 409 for a step out of order.
+                With a matching HTTP status: 400 for bad input, 404 when not found, 409 for a step out of order, 422 when a reported extrinsic does not check out.
               </Basic>
               <Basic term="Fees" wide>
                 Quotes list the network fee estimate and, when set, RelayMesh’s fee as a <Mono>provider</Mono> fee with its <Mono>recipient</Mono>. The fee is paid in the same
@@ -290,7 +298,7 @@ export default async function DevelopersPage() {
             </dl>
           </section>
 
-          {endpoints(base, intentId).map((group) => (
+          {endpoints(base, intentId, nowSeconds() + 900).map((group) => (
             <section key={group.id} id={group.id} className="grid scroll-mt-28 gap-4">
               <div className="grid gap-2">
                 <h2 className="text-xl font-semibold tracking-[-0.02em]">{group.title}</h2>
