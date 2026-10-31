@@ -4,10 +4,10 @@ import { ArrowSquareOut, CircleNotch, FileArrowUp, HourglassMedium, SealCheck, S
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPublicClient, http, type Hex } from "viem";
 import { intentRegistryAbi } from "@relaymesh/contracts/abi/IntentRegistry";
-import { receiptBatchRegistryAbi } from "@relaymesh/contracts/abi/ReceiptBatchRegistry";
 import { isChainId } from "@relaymesh/core";
 import { CopyButton } from "./copy-button";
 import { Badge, Button, inputClass, Mono, Panel } from "./ui";
+import { findBatchLog } from "@/lib/batch-log";
 import { explorerBlockUrl, formatAmount, formatDateTime, shortHash, type Tone } from "@/lib/format";
 import {
   parseReceipt,
@@ -20,6 +20,12 @@ import {
   type Verdict,
   type Verification,
 } from "@/lib/verify-receipt";
+
+/** One of RelayMesh's batch contracts; both emit the same BatchRecorded event, which is what is checked. */
+export interface BatchContract {
+  address: Hex;
+  name: "ReceiptBatchLog" | "ReceiptBatchRegistry";
+}
 
 export interface VerifierExample {
   intentId: string;
@@ -91,13 +97,22 @@ async function fetchBatchProof(intentId: string): Promise<BatchProofClaim | null
   const response = await fetch(`/api/intents/${intentId}/anchor`, { cache: "no-store" });
   if (response.status === 404) return null;
   if (!response.ok) throw new Error("RelayMesh could not load this receipt’s batch proof right now. Try again in a moment.");
-  const body = (await response.json().catch(() => null)) as { batch?: { receiptHash?: unknown; proof?: unknown } | null } | null;
+  const body = (await response.json().catch(() => null)) as {
+    batch?: { receiptHash?: unknown; proof?: unknown; contractAddress?: unknown; txHash?: unknown } | null;
+  } | null;
   const batch = body?.batch;
   if (!batch) return null;
-  if (typeof batch.receiptHash !== "string" || !Array.isArray(batch.proof) || !batch.proof.every((p) => typeof p === "string")) {
+  const { receiptHash, proof, contractAddress, txHash } = batch;
+  if (
+    typeof receiptHash !== "string" ||
+    typeof contractAddress !== "string" ||
+    typeof txHash !== "string" ||
+    !Array.isArray(proof) ||
+    !proof.every((p) => typeof p === "string")
+  ) {
     throw new Error("RelayMesh returned a malformed batch proof for this intent.");
   }
-  return { receiptHash: batch.receiptHash as Hex, proof: batch.proof as Hex[] };
+  return { receiptHash: receiptHash as Hex, proof: proof as Hex[], contractAddress: contractAddress as Hex, txHash: txHash as Hex };
 }
 
 async function fetchReceipt(intentId: string): Promise<string> {
@@ -122,14 +137,15 @@ export function ReceiptVerifier({
   rpcUrl,
   explorerUrl,
   registry,
-  batchRegistry,
+  batchContracts,
   initialIntentId,
   examples,
 }: {
   rpcUrl: string;
   explorerUrl: string;
   registry: { address: Hex; fromBlock: string | null } | null;
-  batchRegistry: Hex | null;
+  /** RelayMesh's batch contracts from this deployment's configuration, newest first. */
+  batchContracts: BatchContract[];
   initialIntentId: string | null;
   examples: VerifierExample[];
 }) {
@@ -162,24 +178,13 @@ export function ReceiptVerifier({
   }, [client, registry]);
 
   const batches = useMemo<BatchReader | null>(() => {
-    if (!batchRegistry) return null;
-    const contract = { address: batchRegistry, abi: receiptBatchRegistryAbi } as const;
-    const batchRecorded = receiptBatchRegistryAbi.find((item) => item.type === "event" && item.name === "BatchRecorded");
+    if (batchContracts.length === 0) return null;
     return {
+      contracts: batchContracts.map((c) => c.address),
       fetchProof: fetchBatchProof,
-      async getBatch(root) {
-        const b = await client.readContract({ ...contract, functionName: "getBatch", args: [root] });
-        return b.recordedAt === 0n ? null : { recordedAt: b.recordedAt, blockNumber: b.blockNumber, leafCount: b.leafCount };
-      },
-      async findBatchTx(root, blockNumber) {
-        // The contract stores the block it recorded the batch in, so the search covers exactly that block.
-        if (batchRecorded?.type !== "event") return null;
-        const logs = await client.getLogs({ address: batchRegistry, event: batchRecorded, args: { root }, fromBlock: blockNumber, toBlock: blockNumber });
-        const log = logs.at(-1);
-        return log?.transactionHash && log.blockNumber !== null ? { txHash: log.transactionHash, blockNumber: log.blockNumber } : null;
-      },
+      findBatch: (contract, txHash, root) => findBatchLog(client, contract, txHash, root),
     };
-  }, [client, batchRegistry]);
+  }, [client, batchContracts]);
 
   const run = useCallback(
     async (source: { intentId: string } | { json: string }) => {
@@ -363,7 +368,7 @@ export function ReceiptVerifier({
           </Panel>
         )}
         {state.kind === "done" && (
-          <Result receipt={state.receipt} result={state.result} rpcUrl={rpcUrl} explorerUrl={explorerUrl} registry={registry?.address ?? null} batchRegistry={batchRegistry} />
+          <Result receipt={state.receipt} result={state.result} rpcUrl={rpcUrl} explorerUrl={explorerUrl} registry={registry?.address ?? null} batchContracts={batchContracts} />
         )}
       </div>
     </>
@@ -412,20 +417,22 @@ function Result({
   rpcUrl,
   explorerUrl,
   registry,
-  batchRegistry,
+  batchContracts,
 }: {
   receipt: ParsedReceipt;
   result: Verification;
   rpcUrl: string;
   explorerUrl: string;
   registry: Hex | null;
-  batchRegistry: Hex | null;
+  batchContracts: BatchContract[];
 }) {
   const verdict = VERDICT[result.verdict];
   const batch = result.batch;
   const inBatch = result.anchoredIn === "batch" || result.verdict === "proof_invalid";
   const body = result.verdict === "match" && result.anchoredIn === "batch" ? BATCH_MATCH_BODY : verdict.body;
-  const contract = inBatch ? batchRegistry : (registry ?? batchRegistry);
+  const batchContract = result.batch && batchContracts.find((c) => c.address.toLowerCase() === result.batch?.contract.toLowerCase());
+  const contract = inBatch ? (batchContract?.address ?? result.batch?.contract ?? null) : registry;
+  const contractName = inBatch ? (batchContract?.name ?? "not a RelayMesh contract") : "IntentRegistry";
   return (
     <section className="enter rounded-[18px] border border-line bg-surface shadow-panel" style={{ "--i": 2 } as React.CSSProperties}>
       <div className={`flex items-start gap-3 rounded-t-[18px] border-b px-5 py-4 sm:px-6 ${VERDICT_RING[verdict.tone]}`}>
@@ -480,7 +487,7 @@ function Result({
                 <span className="grid gap-1">
                   <HashValue value={batch.root} label="Copy batch root" />
                   <span className="text-[13px] text-muted tabular-nums">
-                    {batch.onChain.leafCount} {batch.onChain.leafCount === 1 ? "receipt" : "receipts"} in this batch · recorded {formatDateTime(Number(batch.onChain.recordedAt))}
+                    {batch.onChain.leafCount} {batch.onChain.leafCount === 1 ? "entry" : "entries"} in this batch (receipts and bridge checks) · recorded {formatDateTime(Number(batch.onChain.recordedAt))}
                   </span>
                   {result.verdict === "mismatch" && <span className="text-[13px] text-muted">Reached from the hash in the batch, not from this receipt</span>}
                 </span>
@@ -518,7 +525,7 @@ function Result({
         {contract && (
           <>
             , contract <Mono className="text-[12px]">{shortHash(contract, 8, 6)}</Mono>
-            {inBatch ? " (ReceiptBatchRegistry)" : registry ? " (IntentRegistry)" : ""}
+            {` (${contractName})`}
           </>
         )}
         . Hash = <Mono className="text-[12px]">keccak256(&quot;relaymesh.receipt.v1\n&quot; + canonical JSON)</Mono>

@@ -152,7 +152,7 @@ curl -s localhost:3010/api/intents/$INTENT_ID/receipt -D - | grep -i x-receipt-h
 The **Verify** page ([/verify](https://relaymesh.162-62-231-147.sslip.io/verify)) does this in the visitor's browser.
 Given an intent ID or a pasted receipt, it hashes the receipt locally and reads the registries straight from the V3 EVM RPC, so the verdict never relies on RelayMesh's server.
 Receipts anchored one by one are checked against `IntentRegistry` exactly as before.
-For a receipt anchored in a batch, the browser recomputes its leaf, folds the Merkle proof RelayMesh serves up to a root, and checks that root is recorded in `ReceiptBatchRegistry`; a forged proof cannot reach a recorded root, so the proof needs no trust.
+For a receipt anchored in a batch, the browser recomputes its leaf, folds the Merkle proof RelayMesh serves up to a root, and finds that root in the `BatchRecorded` log of the batch transaction, emitted by one of RelayMesh's own batch contracts; a forged proof cannot reach a recorded root, so the proof needs no trust.
 It reports whether the receipt matches the chain, does not match (a changed receipt), carries a proof that leads nowhere, or is not anchored yet, and shows the anchoring transaction.
 
 ### Batch anchoring
@@ -161,6 +161,12 @@ Every settled receipt is committed on chain, but not one write at a time.
 Anchoring each intent cost two `IntentRegistry` writes, about 23 tPOT per transfer, almost all of it Revive's storage deposit, and it drained the relayer.
 The watcher now collects settled receipts and writes one Merkle root per batch to `ReceiptBatchRegistry`, 3.86 tPOT per batch on V3 whatever its size (measured on a one-leaf and a two-leaf batch).
 A batch is written when 20 receipts are waiting or the oldest has waited 30 minutes (`ANCHOR_BATCH_SIZE`, `ANCHOR_BATCH_MAX_WAIT_MINUTES`).
+
+Almost all of that 3.86 tPOT is the storage deposit for the one slot each batch writes.
+`ReceiptBatchLog` records the same root in an event and stores nothing, so a write costs about 0.013 tPOT (simulated on V3): one transfer's 0.2 tPOT fee pays for about 15 of them.
+With `RECEIPT_BATCH_LOG_ADDRESS` set, the watcher writes there and anchors each transfer as soon as it settles (`ANCHOR_BATCH_SIZE` defaults to 1); batching then only saves gas when several transfers settle together.
+Verification reads the root from the batch transaction's receipt, which works the same for both contracts, so everything in `ReceiptBatchRegistry` keeps verifying and is never anchored again.
+`ReceiptBatchLog` is built and checked on V3 and on a local chain, and not deployed yet (about 50 tPOT).
 
 - Leaf: `keccak256("relaymesh.batch.leaf.v1\n" + {"intentHash","receiptHash"})`, the same canonical-JSON hashing as receipts.
 - Nodes: sorted-pair hashing under `relaymesh.batch.node.v1`, so a proof is just the sibling hashes; leaves and nodes never share a domain.
@@ -272,6 +278,7 @@ The full diagrams, including the state machine and a sequence diagram, are in [d
 | --- | --- |
 | `contracts/src/IntentRegistry.sol` | Records an intent hash and route, then the receipt hash, from the same recorder (per-intent anchoring, before batching) |
 | `contracts/src/ReceiptBatchRegistry.sol` | Records one Merkle root per batch of receipts; only the recorder fixed at deployment can write |
+| `contracts/src/ReceiptBatchLog.sol` | Emits one Merkle root per batch without storing it, so a write skips the storage deposit; same recorder rule and event |
 | `contracts/test/ReceiptBatchRegistryChecks.sol` | Behaviour checks that run inside one `eth_call` on V3, since its RPC rejects state overrides |
 | `contracts/scripts/deploy.ts` | Deploys either contract to V3 and checks the deployed code, immutables included, matches the artifact |
 
@@ -365,7 +372,8 @@ The core flow is proven on chain: real signed transfers were quoted, verified, f
 
 - **iBridge route.** Blocked on PortalDot: there is no public interface, and iBridge stays closed to third parties through demo day.
   RelayMesh keeps the provider slot and reports why it is unavailable.
-- **Relayer funding.** A batch costs 3.86 tPOT however many entries it holds, so the 0.2 tPOT fee covers anchoring in full only at about 20 transfers per batch.
+- **Relayer funding.** A `ReceiptBatchRegistry` batch costs 3.86 tPOT however many entries it holds, so the 0.2 tPOT fee covers anchoring in full only at about 20 transfers per batch.
+  Deploying `ReceiptBatchLog` (about 50 tPOT, once) fixes this: each write costs about 0.013 tPOT, so every transfer's fee more than pays for its own anchor.
   At testnet volume most batches hold one or two entries, and the relayer's 77.84 tPOT pays for about 20 more batches before it needs a top-up.
 - **A second route.** Ranking only becomes meaningful with more than one live provider.
 - **Automated UI tests.** The web app's flows are verified by hand in a browser against the live testnet; the core, database, watcher and receipt-checking logic have automated tests.
@@ -393,7 +401,7 @@ pnpm typecheck && pnpm lint
 ```
 
 The watcher tests use an in-memory V3 chain and batch registry as test doubles; the database is real.
-The contract tests compile every source and check the committed ABIs; `pnpm --filter @relaymesh/contracts simulate:batch-registry` runs the contract's behaviour checks on V3 itself.
+The contract tests compile every source and check the committed ABIs; `simulate:batch-registry` and `simulate:batch-log` run the contracts' behaviour checks on V3 itself.
 The web app has no automated UI tests yet; its flows were verified manually in a browser against the live testnet.
 
 ## Run it locally
@@ -429,8 +437,10 @@ cd RelayMesh/contracts
 pnpm compile
 pnpm simulate-deploy  # read-only check against V3
 pnpm simulate:batch-registry  # read-only: behaviour checks and costs on V3
+pnpm simulate:batch-log  # the same for ReceiptBatchLog
 pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
 pnpm deploy:batch-registry  # about 81 tPOT; recorder = BATCH_RECORDER_ADDRESS or the deployer
+pnpm deploy:batch-log  # about 50 tPOT; same recorder rule
 ```
 
 ## The one-flow demo
@@ -460,9 +470,10 @@ pnpm deploy:batch-registry  # about 81 tPOT; recorder = BATCH_RECORDER_ADDRESS o
 
 | Variable | Purpose |
 | --- | --- |
-| `RECEIPT_BATCH_REGISTRY_ADDRESS` | Deployed `ReceiptBatchRegistry`; anchoring is off unless set with the key below. The web app's receipt checker reads it too |
+| `RECEIPT_BATCH_LOG_ADDRESS` | Deployed `ReceiptBatchLog`; when set, new batches go here. The web app reads it too |
+| `RECEIPT_BATCH_REGISTRY_ADDRESS` | Deployed `ReceiptBatchRegistry`; new batches go here when no log is set. Keep it set on the web app so its batches still verify |
 | `RELAYER_PRIVATE_KEY` | EVM key that pays for batch writes; must be the contract's recorder |
-| `ANCHOR_BATCH_SIZE` | Write a batch once this many receipts wait (default 20) |
+| `ANCHOR_BATCH_SIZE` | Write a batch once this many receipts wait (default 1 with `ReceiptBatchLog`, 20 otherwise) |
 | `ANCHOR_BATCH_MAX_WAIT_MINUTES` | ...or once the oldest has waited this long (default 30) |
 | `ANCHOR_BATCH_MAX_LEAVES` | Most receipts in one batch (default 256) |
 | `INTENT_REGISTRY_ADDRESS` | `IntentRegistry`, read by the web app's receipt checker for receipts anchored before batching |
@@ -476,8 +487,8 @@ pnpm deploy:batch-registry  # about 81 tPOT; recorder = BATCH_RECORDER_ADDRESS o
 
 | Variable | Purpose |
 | --- | --- |
-| `DEPLOYER_PRIVATE_KEY` | EVM key used by `deploy:registry` and `deploy:batch-registry` |
-| `BATCH_RECORDER_ADDRESS` | `ReceiptBatchRegistry`'s only writer, fixed at deployment (defaults to the deployer) |
+| `DEPLOYER_PRIVATE_KEY` | EVM key used by the `deploy:*` scripts |
+| `BATCH_RECORDER_ADDRESS` | The batch contracts' only writer, fixed at deployment (defaults to the deployer) |
 
 ## Deploy
 
@@ -531,7 +542,7 @@ RelayMesh/
     chains/       # PortalDot V3 Substrate and EVM access
     routes/       # route providers and ranking
     db/           # Drizzle schema, migrations, store
-  contracts/      # IntentRegistry, ReceiptBatchRegistry, scripts, generated ABIs
+  contracts/      # IntentRegistry, ReceiptBatchRegistry, ReceiptBatchLog, scripts, generated ABIs
   docs/
     architecture.md
     devlog.md     # dated record of every spike and verification

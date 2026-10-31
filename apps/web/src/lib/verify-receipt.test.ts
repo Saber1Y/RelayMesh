@@ -76,20 +76,22 @@ describe("batched receipt verification in the browser", () => {
   // A batch of five: this receipt and four other settled intents.
   const others = [1, 2, 3, 4].map((n) => batchLeaf(keccak256(stringToBytes(`intent-${n}`)), keccak256(stringToBytes(`receipt-${n}`))));
   const tree = buildMerkleTree([leaf, ...others]);
-  const claim: BatchProofClaim = { receiptHash: ANCHORED_HASH, proof: merkleProof(tree, leaf) };
-  const BATCH: BatchState = { recordedAt: 1_793_270_000n, blockNumber: 240_100n, leafCount: 5 };
+  const LOG_CONTRACT = "0x00000000000000000000000000000000000000c1" as Hex;
   const BATCH_TX = { txHash: `0x${"5b".repeat(32)}` as Hex, blockNumber: 240_100n };
+  const claim: BatchProofClaim = { receiptHash: ANCHORED_HASH, proof: merkleProof(tree, leaf), contractAddress: LOG_CONTRACT, txHash: BATCH_TX.txHash };
+  const BATCH: BatchState = { ...BATCH_TX, recordedAt: 1_793_270_000n, leafCount: 5 };
 
+  /** The chain holds one transaction, BATCH_TX, whose BatchRecorded logs (from LOG_CONTRACT) carry the `recorded` roots. */
   function batches(served: BatchProofClaim | null, recorded: Hex[] = [tree.root]): BatchReader & { lookups: Hex[] } {
     const lookups: Hex[] = [];
     return {
       lookups,
+      contracts: [LOG_CONTRACT],
       fetchProof: async () => served,
-      getBatch: async (root) => {
+      findBatch: async (contract, txHash, root) => {
         lookups.push(root);
-        return recorded.includes(root) ? BATCH : null;
+        return contract === LOG_CONTRACT && txHash === BATCH_TX.txHash && recorded.includes(root) ? BATCH : null;
       },
-      findBatchTx: async (root, block) => (recorded.includes(root) && block === BATCH.blockNumber ? BATCH_TX : null),
     };
   }
 
@@ -117,14 +119,14 @@ describe("batched receipt verification in the browser", () => {
   });
 
   it("rejects a proof that leads to no recorded root, whatever RelayMesh claims", async () => {
-    const forged = { receiptHash: ANCHORED_HASH, proof: [...claim.proof.slice(0, -1), keccak256(stringToBytes("forged"))] };
+    const forged = { ...claim, proof: [...claim.proof.slice(0, -1), keccak256(stringToBytes("forged"))] };
     expect(await verifyReceipt(receipt, reader(null), batches(forged))).toMatchObject({ verdict: "proof_invalid", anchoredIn: null, anchoredHash: null, anchorTx: null });
     expect(await verifyReceipt(receipt, reader(null), batches(claim, []))).toMatchObject({ verdict: "proof_invalid" });
-    expect(await verifyReceipt(receipt, reader(null), batches({ receiptHash: ANCHORED_HASH, proof: ["0xnot-a-hash" as Hex] }))).toMatchObject({ verdict: "proof_invalid" });
+    expect(await verifyReceipt(receipt, reader(null), batches({ ...claim, proof: ["0xnot-a-hash" as Hex] }))).toMatchObject({ verdict: "proof_invalid" });
   });
 
   it("rejects a proof with a level missing", async () => {
-    expect(await verifyReceipt(receipt, reader(null), batches({ receiptHash: ANCHORED_HASH, proof: claim.proof.slice(1) }))).toMatchObject({ verdict: "proof_invalid" });
+    expect(await verifyReceipt(receipt, reader(null), batches({ ...claim, proof: claim.proof.slice(1) }))).toMatchObject({ verdict: "proof_invalid" });
   });
 
   it("checks IntentRegistry first, so receipts anchored before batching verify exactly as before", async () => {
@@ -144,8 +146,11 @@ describe("batched receipt verification in the browser", () => {
     expect(await verifyReceipt(receipt, null, batches(null))).toMatchObject({ verdict: "not_anchored" });
   });
 
-  it("keeps the verdict when the batch transaction search fails", async () => {
-    const reads = { ...batches(claim), findBatchTx: async () => Promise.reject(new Error("log range too large")) };
-    expect(await verifyReceipt(receipt, reader(null), reads)).toMatchObject({ verdict: "match", anchorTx: null });
+  it("accepts a root only from RelayMesh's own batch contract and the transaction that recorded it", async () => {
+    const elsewhere = { ...claim, contractAddress: "0x00000000000000000000000000000000000000ee" as Hex };
+    const reads = batches(elsewhere);
+    expect(await verifyReceipt(receipt, reader(null), reads)).toMatchObject({ verdict: "proof_invalid" });
+    expect(reads.lookups).toEqual([]); // an untrusted contract is never even read
+    expect(await verifyReceipt(receipt, reader(null), batches({ ...claim, txHash: `0x${"5c".repeat(32)}` as Hex }))).toMatchObject({ verdict: "proof_invalid" });
   });
 });

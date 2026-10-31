@@ -466,3 +466,26 @@ Two real 1 tPOT transfers settled with the fee (intents `0x9add07bd…` and `0xd
 The landing page now has a fee ledger: the fee, what it has collected from settled transfers, what anchoring has cost (read from each batch transaction's receipt on V3), and the relayer's balance.
 A batch costs the same however many entries it holds, so at 20 transfers a batch the fee covers anchoring in full; at today's testnet volume it covers a small part, and the page says so.
 
+
+## 2026-10-31: Anchoring each transfer for a fraction of a cent
+
+The fee ledger made the problem plain: a `ReceiptBatchRegistry` batch costs 3.86 tPOT however many entries it holds, so the 0.2 tPOT fee only pays for anchoring at about 20 transfers per batch.
+At testnet volume most batches held one or two entries, and the relayer still needed topping up by hand.
+
+Almost all of that cost is Revive's storage deposit for the one slot each batch writes.
+Simulated on V3, a contract that only emits `BatchRecorded` and stores nothing costs about 0.013 tPOT per write, against 3.91 tPOT for the stored version (both measured as the difference between two simulated deployments).
+That is `ReceiptBatchLog`: the same recorder rule, the same zero-root and empty-batch checks, and the same event, so one decoder reads both contracts.
+
+What changed:
+
+- **The watcher** writes to `ReceiptBatchLog` when `RECEIPT_BATCH_LOG_ADDRESS` is set, and then anchors each transfer as soon as it settles (`ANCHOR_BATCH_SIZE` defaults to 1).
+  After a crash it finds a mined root in the contract's recent `BatchRecorded` events; a root older than its 5,000-block search would simply be written again for 0.013 tPOT.
+- **Nothing is anchored twice.** A receipt or bridge check in a mined batch of any batch contract is never queued for another, and proofs are looked up across every configured contract.
+- **Verification** now reads the root from the batch transaction's receipt instead of `getBatch`, which works for both contracts, and accepts a log only from RelayMesh's own configured contract addresses.
+  The bridge checker used to take the contract address from the API; it now checks it against the page's configuration too.
+- **The landing page** prices anchoring by the latest batch instead of the average, so old 3.86 tPOT batches do not hide the new cost.
+
+Checked on V3 (read-only): the log contract's behaviour checks pass inside one `eth_call`, and the deployment is estimated at about 50 tPOT.
+Checked end to end on a local anvil chain: the real deploy script for both contracts, one receipt anchored in the old registry, a switch to the log, a crash after mining recovered from the event without a second write, and `/verify` reporting both receipts as matching and a tampered copy as a mismatch.
+
+`ReceiptBatchLog` is not deployed on V3 yet.

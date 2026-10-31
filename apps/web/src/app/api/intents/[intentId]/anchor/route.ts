@@ -1,7 +1,7 @@
 import type { Hex } from "viem";
 import { getReceiptBatchProof, loadIntent } from "@relaymesh/db";
 import { errorResponse, handleError, HEX16, json } from "@/server/http";
-import { batchRegistryAddress, getDb } from "@/server/services";
+import { batchContracts, getDb } from "@/server/services";
 
 export const runtime = "nodejs";
 
@@ -17,8 +17,7 @@ export async function GET(_request: Request, ctx: { params: Promise<{ intentId: 
   const db = getDb();
   try {
     if (!(await loadIntent(db, intentId as Hex))) return errorResponse("NOT_FOUND", "Intent not found", 404);
-    const contract = batchRegistryAddress();
-    return json({ batch: contract ? await getReceiptBatchProof(db, intentId as Hex, contract) : null });
+    return json({ batch: await getReceiptBatchProof(db, intentId as Hex, batchContracts().all) });
   } catch (error) {
     return handleError(error);
   }

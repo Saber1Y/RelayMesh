@@ -1,9 +1,9 @@
 // Deploys a RelayMesh contract to the PortalDot V3 testnet and verifies it by reading code and state back.
-// Usage: tsx scripts/deploy.ts [IntentRegistry | ReceiptBatchRegistry] (default IntentRegistry).
-// Requires DEPLOYER_PRIVATE_KEY (an EVM key funded with tPOT on the V3 EVM side). ReceiptBatchRegistry
+// Usage: tsx scripts/deploy.ts [IntentRegistry | ReceiptBatchRegistry | ReceiptBatchLog] (default IntentRegistry).
+// Requires DEPLOYER_PRIVATE_KEY (an EVM key funded with tPOT on the V3 EVM side). The batch contracts
 // fixes its recorder at deployment: BATCH_RECORDER_ADDRESS, or the deployer's own address if unset.
 // Estimates: IntentRegistry about 96 tPOT (2026-10-20), ReceiptBatchRegistry about 82 tPOT
-// (2026-10-29), mostly Revive's refundable storage deposit for the code.
+// (2026-10-29), ReceiptBatchLog about 50 tPOT (2026-10-31), mostly Revive's storage deposit for the code.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createWalletClient, encodeAbiParameters, encodeDeployData, formatEther, getAddress, http, type Abi, type Hex } from "viem";
@@ -11,7 +11,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import { assertEvmChainId, createV3PublicClient, loadPortaldotV3Config, portaldotV3EvmChain } from "@relaymesh/chains";
 import { runtimeWithImmutables, type ImmutableReferences } from "./solc";
 
-const CONTRACTS = ["IntentRegistry", "ReceiptBatchRegistry"] as const;
+const CONTRACTS = ["IntentRegistry", "ReceiptBatchRegistry", "ReceiptBatchLog"] as const;
 const name = (process.argv[2] ?? "IntentRegistry") as (typeof CONTRACTS)[number];
 if (!CONTRACTS.includes(name)) {
   console.error(`Unknown contract ${name}; expected one of ${CONTRACTS.join(", ")}.`);
@@ -43,12 +43,13 @@ const account = privateKeyToAccount(key as Hex);
 const wallet = createWalletClient({ account, chain: portaldotV3EvmChain(config), transport: http(config.evmRpcUrl) });
 
 const recorder = getAddress(recorderEnv ?? account.address);
-const args: readonly unknown[] = name === "ReceiptBatchRegistry" ? [recorder] : [];
-// The runtime code the deployment must hold. The recorder is ReceiptBatchRegistry's only immutable.
+const hasRecorder = name !== "IntentRegistry";
+const args: readonly unknown[] = hasRecorder ? [recorder] : [];
+// The runtime code the deployment must hold. The recorder is the batch contracts' only immutable.
 const refs = artifact.immutableReferences ?? {};
 const recorderWord = encodeAbiParameters([{ type: "address" }], [recorder]);
 const expectedCode = runtimeWithImmutables({ deployedBytecode: artifact.deployedBytecode, immutableReferences: refs }, Object.fromEntries(Object.keys(refs).map((id) => [id, recorderWord])));
-if (name === "ReceiptBatchRegistry") console.log(`Recorder (the only account that may write batches): ${recorder}`);
+if (hasRecorder) console.log(`Recorder (the only account that may write batches): ${recorder}`);
 
 const deploy = { abi: artifact.abi, bytecode: artifact.bytecode, args } as const;
 const balance = await publicClient.getBalance({ address: account.address });
@@ -73,7 +74,7 @@ if (code?.toLowerCase() !== expectedCode.toLowerCase()) {
   console.error("Deployed code does not match the compiled artifact.");
   process.exit(1);
 }
-if (name === "ReceiptBatchRegistry") {
+if (hasRecorder) {
   const onChain = (await publicClient.readContract({ address: receipt.contractAddress, abi: artifact.abi, functionName: "recorder" })) as Hex;
   if (getAddress(onChain) !== recorder) {
     console.error(`Deployed recorder ${onChain} is not ${recorder}.`);
@@ -88,7 +89,9 @@ console.log(
   ),
 );
 console.log(
-  name === "ReceiptBatchRegistry"
-    ? "Record these values in docs/evidence.md, then set RECEIPT_BATCH_REGISTRY_ADDRESS for the worker and the web app."
-    : "Record these values in docs/evidence.md and set INTENT_REGISTRY_ADDRESS for the web app's receipt checker.",
+  name === "ReceiptBatchLog"
+    ? "Record these values in docs/evidence.md, then set RECEIPT_BATCH_LOG_ADDRESS for the worker and the web app."
+    : name === "ReceiptBatchRegistry"
+      ? "Record these values in docs/evidence.md, then set RECEIPT_BATCH_REGISTRY_ADDRESS for the worker and the web app."
+      : "Record these values in docs/evidence.md and set INTENT_REGISTRY_ADDRESS for the web app's receipt checker.",
 );
