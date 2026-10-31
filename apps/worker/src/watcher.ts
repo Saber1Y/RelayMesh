@@ -611,21 +611,15 @@ async function anchorReceipts(ctx: WatcherContext, summary: PassSummary): Promis
 
 /** Gets a planned batch's root on chain, or finds the transaction that already put it there, and records it. */
 async function confirmBatch(ctx: WatcherContext, registry: BatchRegistryClient, batch: StoredReceiptBatch, summary: PassSummary): Promise<void> {
-  const onChain = await registry.getBatch(batch.root);
-  let tx: MinedTx | null;
-  if (!onChain) {
-    tx = await registry.recordBatch(batch.root, batch.leafCount);
-  } else {
-    // Only the configured recorder can write, so a recorded root is this relayer's earlier write.
-    if (onChain.leafCount !== batch.leafCount) {
-      throw new Error(`Registry holds batch ${batch.root} with ${onChain.leafCount} leaves, but the stored plan has ${batch.leafCount}`);
-    }
-    tx = await registry.findBatchEvent(batch.root, onChain.blockNumber);
-    if (!tx) throw new Error(`Registry holds batch ${batch.root} but no BatchRecorded event was found in block ${onChain.blockNumber}`);
+  const found = await registry.findBatch(batch.root);
+  // Only the configured recorder can write, so a recorded root is this relayer's earlier write.
+  if (found && found.leafCount !== batch.leafCount) {
+    throw new Error(`Batch ${batch.root} is recorded on chain with ${found.leafCount} leaves, but the stored plan has ${batch.leafCount}`);
   }
-  await recordReceiptBatchAnchor(ctx.db, { contractAddress: registry.address, root: batch.root, ...tx });
+  const tx: MinedTx = found ?? (await registry.recordBatch(batch.root, batch.leafCount));
+  await recordReceiptBatchAnchor(ctx.db, { contractAddress: registry.address, root: batch.root, txHash: tx.txHash, blockNumber: tx.blockNumber });
   summary.anchored += batch.leafCount;
-  ctx.log.info("batch anchored", { root: batch.root, leaves: batch.leafCount, txHash: tx.txHash, recovered: onChain !== null });
+  ctx.log.info("batch anchored", { root: batch.root, leaves: batch.leafCount, txHash: tx.txHash, recovered: found !== null });
 }
 
 /** One watcher pass. Each stage reads fresh state, so passes are idempotent and safe to re-run after a crash. */

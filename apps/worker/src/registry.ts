@@ -1,38 +1,44 @@
-import { createWalletClient, getAddress, http, type Hex, type PublicClient } from "viem";
+import { createWalletClient, getAbiItem, getAddress, http, type Hex, type PublicClient } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { portaldotV3EvmChain, type PortaldotV3Config } from "@relaymesh/chains";
+import { receiptBatchLogAbi } from "@relaymesh/contracts/abi/ReceiptBatchLog";
 import { receiptBatchRegistryAbi } from "@relaymesh/contracts/abi/ReceiptBatchRegistry";
 
-export interface BatchState {
-  /** Block timestamp of the recording transaction, in unix seconds. */
-  recordedAt: bigint;
-  blockNumber: bigint;
-  leafCount: number;
-}
+/**
+ * Which batch contract the watcher writes to. "registry" (ReceiptBatchRegistry) also stores each root;
+ * "log" (ReceiptBatchLog) only emits it, which skips Revive's storage deposit.
+ */
+export type BatchContractKind = "registry" | "log";
 
 export interface MinedTx {
   txHash: Hex;
   blockNumber: bigint;
 }
 
-/** On-chain ReceiptBatchRegistry access. Only the worker's relayer account ever writes. */
+/** On-chain batch contract access (ReceiptBatchRegistry or ReceiptBatchLog). Only the worker's relayer account ever writes. */
 export interface BatchRegistryClient {
   address: Hex;
+  kind: BatchContractKind;
   chainId: number;
   /** The relayer account that records batches. */
   recorder: Hex;
   /** The recorder fixed in the contract at deployment; writes from any other account revert. */
   contractRecorder(): Promise<Hex>;
-  /** The recorded batch with this root, or null if the root was never recorded. */
-  getBatch(root: Hex): Promise<BatchState | null>;
   recordBatch(root: Hex, leafCount: number): Promise<MinedTx>;
-  /** The transaction that recorded this root in the given block, for recovery after a crash between mining and recording. */
-  findBatchEvent(root: Hex, blockNumber: bigint): Promise<MinedTx | null>;
+  /**
+   * The transaction that already recorded this root, for recovery after a crash between mining and
+   * recording, or null if none is found. For the log contract the search covers the last
+   * EVENT_LOOKBACK_BLOCKS; a root mined earlier than that is simply recorded again.
+   */
+  findBatch(root: Hex): Promise<(MinedTx & { leafCount: number }) | null>;
 }
 
+/** How far back the log contract's recovery search reaches: about eight hours of V3 blocks. */
+export const EVENT_LOOKBACK_BLOCKS = 5_000n;
+
 /**
- * The relayer cannot pay for a write. On PortalDot V3 most of a write's cost is Revive's storage
- * deposit (about 3.9 tPOT per batch, whatever its size), so the account runs dry long before gas would.
+ * The relayer cannot pay for a write. A ReceiptBatchRegistry write costs about 3.9 tPOT on PortalDot
+ * V3, almost all of it Revive's storage deposit; a ReceiptBatchLog write about 0.013 tPOT.
  */
 export class RelayerFundsError extends Error {
   constructor(
@@ -45,26 +51,35 @@ export class RelayerFundsError extends Error {
   }
 }
 
-export function createBatchRegistryClient(config: PortaldotV3Config, publicClient: PublicClient, address: Hex, privateKey: Hex): BatchRegistryClient {
+export function createBatchRegistryClient(
+  config: PortaldotV3Config,
+  publicClient: PublicClient,
+  address: Hex,
+  privateKey: Hex,
+  kind: BatchContractKind,
+): BatchRegistryClient {
   const account = privateKeyToAccount(privateKey);
   const chain = portaldotV3EvmChain(config);
   const wallet = createWalletClient({ account, chain, transport: http(config.evmRpcUrl) });
-  const contract = { address: getAddress(address), abi: receiptBatchRegistryAbi } as const;
-  const batchRecorded = receiptBatchRegistryAbi.find((item) => item.type === "event" && item.name === "BatchRecorded");
-  if (batchRecorded?.type !== "event") throw new Error("ABI has no BatchRecorded event");
+  // Both contracts share recorder(), recordBatch and the BatchRecorded event; only the registry has getBatch.
+  const contract = { address: getAddress(address), abi: receiptBatchLogAbi } as const;
+  const batchRecorded = getAbiItem({ abi: receiptBatchLogAbi, name: "BatchRecorded" });
+
+  async function logsFor(root: Hex, fromBlock: bigint, toBlock: bigint | "latest") {
+    const logs = await publicClient.getLogs({ address: contract.address, event: batchRecorded, args: { root }, fromBlock, toBlock });
+    const log = logs[0]; // earliest first
+    if (!log?.transactionHash || log.blockNumber === null || log.args.leafCount === undefined) return null;
+    return { txHash: log.transactionHash, blockNumber: log.blockNumber, leafCount: log.args.leafCount };
+  }
 
   return {
     address: address.toLowerCase() as Hex,
+    kind,
     chainId: config.evmChainId,
     recorder: account.address.toLowerCase() as Hex,
 
     async contractRecorder() {
       return (await publicClient.readContract({ ...contract, functionName: "recorder" })).toLowerCase() as Hex;
-    },
-
-    async getBatch(root) {
-      const batch = await publicClient.readContract({ ...contract, functionName: "getBatch", args: [root] });
-      return batch.recordedAt === 0n ? null : { recordedAt: batch.recordedAt, blockNumber: batch.blockNumber, leafCount: batch.leafCount };
     },
 
     async recordBatch(root, leafCount) {
@@ -86,11 +101,18 @@ export function createBatchRegistryClient(config: PortaldotV3Config, publicClien
       return { txHash, blockNumber: receipt.blockNumber };
     },
 
-    async findBatchEvent(root, blockNumber) {
-      // The contract stores the block it recorded the batch in, so the search covers exactly that block.
-      const logs = await publicClient.getLogs({ address: contract.address, event: batchRecorded, args: { root }, fromBlock: blockNumber, toBlock: blockNumber });
-      const log = logs.at(-1);
-      return log?.transactionHash && log.blockNumber !== null ? { txHash: log.transactionHash, blockNumber: log.blockNumber } : null;
+    async findBatch(root) {
+      if (kind === "registry") {
+        // The registry stores the block it recorded the batch in, so the search covers exactly that block.
+        const batch = await publicClient.readContract({ address: contract.address, abi: receiptBatchRegistryAbi, functionName: "getBatch", args: [root] });
+        if (batch.recordedAt === 0n) return null;
+        const found = await logsFor(root, batch.blockNumber, batch.blockNumber);
+        if (!found) throw new Error(`Registry holds batch ${root} but no BatchRecorded event was found in block ${batch.blockNumber}`);
+        return found;
+      }
+      // The log keeps nothing in storage: search recent blocks for the event, earliest first.
+      const head = await publicClient.getBlockNumber();
+      return logsFor(root, head > EVENT_LOOKBACK_BLOCKS ? head - EVENT_LOOKBACK_BLOCKS : 0n, "latest");
     },
   };
 }

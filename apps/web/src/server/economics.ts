@@ -2,7 +2,7 @@ import "server-only";
 import type { Hex, PublicClient } from "viem";
 import { createV3PublicClient } from "@relaymesh/chains";
 import { listAnchoredBatches, serviceFeeTotals } from "@relaymesh/db";
-import { batchRegistryAddress, getDb, serviceFeeConfig, v3Config } from "./services";
+import { batchContracts, getDb, serviceFeeConfig, v3Config } from "./services";
 
 /** Revive reports native balances and gas in 18-decimal EVM units; tPOT has 14 on the Substrate side. */
 const EVM_TO_NATIVE = 10_000n;
@@ -44,11 +44,11 @@ async function batchCost(txHash: Hex): Promise<bigint> {
  */
 export async function loadEconomics(): Promise<Economics> {
   const db = getDb();
-  const contract = batchRegistryAddress();
+  const contracts = batchContracts().all;
   const relayer = serviceFeeConfig?.recipient ?? null;
   const [fees, batches, balance] = await Promise.all([
     serviceFeeTotals(db),
-    contract ? listAnchoredBatches(db, contract) : Promise.resolve([]),
+    listAnchoredBatches(db, contracts),
     relayer ? evm().getBalance({ address: relayer }) : Promise.resolve(null),
   ]);
   const costs = await Promise.all(batches.map((b) => batchCost(b.txHash)));

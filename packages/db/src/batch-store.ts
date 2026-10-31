@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { Hex } from "viem";
 import { batchLeaf, bridgeCheckLeaf, RelayMeshError, verifyMerkleProof } from "@relaymesh/core";
 import type { Db } from "./client";
@@ -14,7 +14,8 @@ export interface PendingReceiptAnchor {
 
 /**
  * Settled intents whose receipt is anchored neither in IntentRegistry (the per-intent registry used
- * before batching) nor in a batch of this contract, longest-waiting first.
+ * before batching), nor in a mined batch of any batch contract, nor planned for this contract,
+ * longest-waiting first. A receipt anchored in an earlier contract is never anchored again.
  */
 export async function listPendingReceiptAnchors(db: Db, contractAddress: Hex, limit: number): Promise<PendingReceiptAnchor[]> {
   const settledAt = sql<number>`(SELECT max(${statusEvents.at}) FROM ${statusEvents} WHERE ${statusEvents.intentId} = ${intents.intentId} AND ${statusEvents.status} = 'SETTLED')`.mapWith(Number);
@@ -26,6 +27,7 @@ export async function listPendingReceiptAnchors(db: Db, contractAddress: Hex, li
         eq(intents.currentStatus, "SETTLED"),
         sql`NOT EXISTS (SELECT 1 FROM ${registryAnchors} WHERE ${registryAnchors.intentId} = ${intents.intentId} AND ${registryAnchors.step} = 'receipt')`,
         sql`NOT EXISTS (SELECT 1 FROM ${receiptBatchLeaves} WHERE ${receiptBatchLeaves.intentId} = ${intents.intentId} AND ${receiptBatchLeaves.contractAddress} = ${contractAddress})`,
+        sql`NOT EXISTS (SELECT 1 FROM ${receiptBatchLeaves} JOIN ${receiptBatchAnchors} ON ${receiptBatchAnchors.contractAddress} = ${receiptBatchLeaves.contractAddress} AND ${receiptBatchAnchors.root} = ${receiptBatchLeaves.batchRoot} WHERE ${receiptBatchLeaves.intentId} = ${intents.intentId})`,
       ),
     )
     .orderBy(asc(settledAt), asc(intents.createdAt))
@@ -162,14 +164,17 @@ export function proofOf(value: unknown): Hex[] {
   return value;
 }
 
-/** An intent's leaf and proof in a confirmed batch of this contract, or null if it is not anchored in one. */
-export async function getReceiptBatchProof(db: Db, intentId: Hex, contractAddress: Hex): Promise<ReceiptBatchProof | null> {
+/** An intent's leaf and proof in a confirmed batch of one of these contracts (the earliest mined), or null if it is not anchored in one. */
+export async function getReceiptBatchProof(db: Db, intentId: Hex, contracts: readonly Hex[]): Promise<ReceiptBatchProof | null> {
+  if (contracts.length === 0) return null;
   const [row] = await db
     .select({ leaf: receiptBatchLeaves, batch: receiptBatches, anchor: receiptBatchAnchors })
     .from(receiptBatchLeaves)
     .innerJoin(receiptBatches, and(eq(receiptBatches.contractAddress, receiptBatchLeaves.contractAddress), eq(receiptBatches.root, receiptBatchLeaves.batchRoot)))
     .innerJoin(receiptBatchAnchors, and(eq(receiptBatchAnchors.contractAddress, receiptBatches.contractAddress), eq(receiptBatchAnchors.root, receiptBatches.root)))
-    .where(and(eq(receiptBatchLeaves.intentId, intentId), eq(receiptBatchLeaves.contractAddress, contractAddress)));
+    .where(and(eq(receiptBatchLeaves.intentId, intentId), inArray(receiptBatchLeaves.contractAddress, [...contracts])))
+    .orderBy(asc(receiptBatchAnchors.blockNumber))
+    .limit(1);
   if (!row) return null;
   return {
     contractAddress: row.batch.contractAddress as Hex,
