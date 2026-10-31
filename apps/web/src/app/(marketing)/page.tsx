@@ -11,7 +11,7 @@ import { getDb } from "@/server/services";
 export const dynamic = "force-dynamic";
 
 const EVIDENCE_URL = "https://github.com/Saber1Y/RelayMesh/blob/main/docs/evidence.md";
-const REGISTRY = process.env.INTENT_REGISTRY_ADDRESS ?? null;
+const BATCH_REGISTRY = process.env.RECEIPT_BATCH_REGISTRY_ADDRESS ?? null;
 
 const FLOW = [
   {
@@ -42,9 +42,9 @@ const FLOW = [
 
 const STATUS: { name: string; tone: Tone; label: string; body: string }[] = [
   { name: "Substrate to EVM transfers on V3", tone: "positive", label: "Live", body: "Quoted, signed, finalized and measured on chain, then receipted." },
-  { name: "Receipts anchored in IntentRegistry", tone: "positive", label: "Live", body: "Every settled receipt's hash is written to a contract anyone can read." },
-  { name: "Checks of PortalDot bridge transfers", tone: "positive", label: "Live", body: "Read-only: POT deposits on Portaldot mainnet against WPOT payouts on BSC." },
-  { name: "Batched receipts", tone: "accent", label: "Built", body: "One contract write for many receipts instead of two per transfer. Awaiting deployment." },
+  { name: "Receipts anchored in batches", tone: "positive", label: "Live", body: "Settled receipts go on chain as one Merkle root per batch in ReceiptBatchRegistry, each with a proof anyone can fold." },
+  { name: "Checks of PortalDot bridge transfers", tone: "positive", label: "Live", body: "Read-only: POT deposits on Portaldot mainnet against WPOT payouts on BSC, and each verified check anchored in the same batches." },
+  { name: "A fee that funds anchoring", tone: "positive", label: "Live", body: "Each transfer pays 0.2 tPOT to the relayer in the same signed call, recorded in its receipt." },
   { name: "iBridge route", tone: "neutral", label: "Waiting", body: "PortalDot has confirmed iBridge stays closed to third parties through demo day." },
 ];
 
@@ -137,7 +137,13 @@ async function loadLedger(): Promise<Economics | null> {
   }
 }
 
-const tpot = (v: bigint) => formatAmount(v, "portaldot-v3-substrate");
+/** tPOT rounded for a ledger (two decimals by default); the receipts and the chain hold the exact figures. */
+function tpot(v: bigint, decimals = 2): string {
+  const unit = 10n ** BigInt(14 - decimals);
+  const rounded = (v + unit / 2n) / unit;
+  const scale = 10n ** BigInt(decimals);
+  return `${(rounded / scale).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",")}.${(rounded % scale).toString().padStart(decimals, "0")} tPOT`;
+}
 
 function FeeLedger({ ledger }: { ledger: Economics }) {
   const fee = ledger.feePerTransfer;
@@ -174,7 +180,7 @@ function FeeLedger({ ledger }: { ledger: Economics }) {
           {perBatch !== null && (
             <p className="max-w-[60ch] text-sm leading-relaxed text-muted text-pretty">
               A batch costs about {tpot(perBatch)} however many entries it holds, up to 256.
-              {breakEven !== null && <> At {breakEven.toString()} transfers per batch the fee covers it in full; with full batches it could fall below {tpot(perBatch / 256n)}.</>}
+              {breakEven !== null && <> At {breakEven.toString()} transfers per batch the fee covers it in full; with full batches of 256 it could be about {tpot(perBatch / 256n, 3)}.</>}
               {covered !== null && <> So far, at testnet volume, fees have covered {covered}% of anchoring.</>}
             </p>
           )}
@@ -311,7 +317,7 @@ export default async function LandingPage() {
               </span>
               <h3 className="text-xl font-semibold tracking-[-0.03em]">Verify</h3>
               <p className="leading-relaxed text-muted">
-                Paste a receipt or an intent ID. Your browser hashes it and reads IntentRegistry on V3 itself, so you never have to trust RelayMesh’s server.
+                Paste a receipt or an intent ID. Your browser hashes it, folds its Merkle proof and reads the root on V3 itself, so you never have to trust RelayMesh’s server.
               </p>
             </div>
             <span className="inline-flex items-center gap-1.5 text-sm font-medium text-accent">
@@ -348,9 +354,9 @@ export default async function LandingPage() {
                 Read the evidence
                 <ArrowUpRight size={13} />
               </a>
-              {REGISTRY && (
+              {BATCH_REGISTRY && (
                 <span className="inline-flex items-center gap-1.5 text-muted">
-                  IntentRegistry <span className="font-mono text-[12px] text-ink">{shortHash(REGISTRY, 8, 6)}</span>
+                  ReceiptBatchRegistry <span className="font-mono text-[12px] text-ink">{shortHash(BATCH_REGISTRY, 8, 6)}</span>
                 </span>
               )}
             </div>
