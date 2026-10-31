@@ -487,7 +487,7 @@ function Result({
                 <span className="grid gap-1">
                   <HashValue value={batch.root} label="Copy batch root" />
                   <span className="text-[13px] text-muted tabular-nums">
-                    {batch.onChain.leafCount} {batch.onChain.leafCount === 1 ? "receipt" : "receipts"} in this batch · recorded {formatDateTime(Number(batch.onChain.recordedAt))}
+                    {batch.onChain.leafCount} {batch.onChain.leafCount === 1 ? "entry" : "entries"} in this batch (receipts and bridge checks) · recorded {formatDateTime(Number(batch.onChain.recordedAt))}
                   </span>
                   {result.verdict === "mismatch" && <span className="text-[13px] text-muted">Reached from the hash in the batch, not from this receipt</span>}
                 </span>
