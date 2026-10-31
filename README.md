@@ -159,13 +159,15 @@ It reports whether the receipt matches the chain, does not match (a changed rece
 
 Every settled receipt is committed on chain, but not one write at a time.
 Anchoring each intent cost two `IntentRegistry` writes, about 23 tPOT per transfer, almost all of it Revive's storage deposit, and it drained the relayer.
-The watcher now collects settled receipts and writes one Merkle root per batch to `ReceiptBatchRegistry`, about 3.9 tPOT whatever the batch size (simulated on V3).
+The watcher now collects settled receipts and writes one Merkle root per batch to `ReceiptBatchRegistry`, 3.86 tPOT per batch on V3 whatever its size (measured on a one-leaf and a two-leaf batch).
 A batch is written when 20 receipts are waiting or the oldest has waited 30 minutes (`ANCHOR_BATCH_SIZE`, `ANCHOR_BATCH_MAX_WAIT_MINUTES`).
 
 - Leaf: `keccak256("relaymesh.batch.leaf.v1\n" + {"intentHash","receiptHash"})`, the same canonical-JSON hashing as receipts.
 - Nodes: sorted-pair hashing under `relaymesh.batch.node.v1`, so a proof is just the sibling hashes; leaves and nodes never share a domain.
 - Each batch is stored with every leaf and proof before its root is sent, so a crash before or after mining resumes with the same root, read back from the contract.
-- The four receipts already in `IntentRegistry` are never re-batched and still verify there.
+- The five receipts already in `IntentRegistry` are never re-batched and still verify there.
+
+Live since 2026-10-29: 3 batches holding 5 entries (4 receipts and 1 bridge check), 11.58 tPOT spent in all; the first is transaction `0xa55a7d13…63198f0bae` in block #244183 ([evidence](docs/evidence.md)).
 
 ### A fee that pays for anchoring
 
@@ -348,15 +350,27 @@ Those blocks are located from on-chain block timestamps, read from each block's 
 | Server-side verification of reported transactions | Real - rejection paths verified live against real blocks |
 | Watcher finality, scanning and expiry | Real - ran against live V3; expired stale intents correctly |
 | Historical `eth_getBalance` delta measurement | Real - measured 0 to 0.9 tPOT across block #122911 for a live transfer |
-| A signed tPOT transfer settled end to end | Real - five transfers settled, in blocks #122911, #136917, #172163, #232117 and #238153 ([evidence](docs/evidence.md)) |
+| A signed tPOT transfer settled end to end | Real - nine transfers settled on V3: five before batching (blocks #122911, #136917, #172163, #232117, #238153) and four since, including two that paid the fee ([evidence](docs/evidence.md)) |
 | `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; five settled receipts anchored and re-checked against the contract |
-| `ReceiptBatchRegistry` batch anchoring | Deployed at `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` (block #238209); behaviour checked inside an `eth_call` on V3 and run end to end against a local anvil chain. No batch written on V3 yet |
+| `ReceiptBatchRegistry` batch anchoring | Real - deployed at `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` (block #238209); 3 batches with 4 receipts and 1 bridge check, each verified in the browser by folding its proof to the on-chain root |
+| RelayMesh fee | Real - 0.2 tPOT per transfer in the same signed `utility.batchAll`; two transfers paid it and the relayer's balance rose by exactly 0.4 tPOT |
+| Developers page and API | Real - every GET endpoint runs live against the deployment; the viem-only script verifies a receipt on V3 without RelayMesh code |
 | iBridge cross-chain route | Not yet established - no public interface from PortalDot; confirmed closed to third parties through demo day |
 | Checking live PortalDot bridge transfers (POT to BSC) | Real - read-only, verified a 33 POT deposit against its 32.01 WPOT payout on BSC; verified checks are anchored in the V3 receipt batches |
 | Hosted deployment | Real - web app and watcher on an always-on server behind Caddy, Postgres on Render, serving the same settled transfers and receipts |
 
-The core flow is proven on chain: real signed transfers were quoted, verified, finalized, measured, receipted and anchored in `IntentRegistry` (see [docs/evidence.md](docs/evidence.md)).
-What remains is an iBridge route once PortalDot publishes an interface.
+The core flow is proven on chain: real signed transfers were quoted, verified, finalized, measured, receipted and anchored, first in `IntentRegistry` and now in Merkle batches (see [docs/evidence.md](docs/evidence.md)).
+
+### What's left
+
+- **iBridge route.** Blocked on PortalDot: there is no public interface, and iBridge stays closed to third parties through demo day.
+  RelayMesh keeps the provider slot and reports why it is unavailable.
+- **Relayer funding.** A batch costs 3.86 tPOT however many entries it holds, so the 0.2 tPOT fee covers anchoring in full only at about 20 transfers per batch.
+  At testnet volume most batches hold one or two entries, and the relayer's 77.84 tPOT pays for about 20 more batches before it needs a top-up.
+- **A second route.** Ranking only becomes meaningful with more than one live provider.
+- **Automated UI tests.** The web app's flows are verified by hand in a browser against the live testnet; the core, database, watcher and receipt-checking logic have automated tests.
+- **One server.** The web app and the watcher run on a single always-on machine; there is no failover, and a long outage can leave a transfer unmeasurable (it is flagged, never guessed).
+- **Webhooks for integrators.** The API is pull-only today.
 
 ## Tests
 
