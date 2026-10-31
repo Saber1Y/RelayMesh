@@ -16,6 +16,8 @@ export interface Economics {
   anchoredEntries: number;
   /** What the mined batches cost the relayer, from each transaction's receipt (gas used times its price). */
   anchoringSpent: bigint;
+  /** What the most recent batch cost: the price of anchoring now, after any move to a cheaper contract. */
+  latestBatchCost: bigint | null;
   relayer: Hex | null;
   relayerBalance: bigint | null;
 }
@@ -59,6 +61,7 @@ export async function loadEconomics(): Promise<Economics> {
     batches: batches.length,
     anchoredEntries: batches.reduce((sum, b) => sum + b.leafCount, 0),
     anchoringSpent: costs.reduce((sum, c) => sum + c, 0n),
+    latestBatchCost: costs.at(-1) ?? null,
     relayer,
     relayerBalance: balance === null ? null : balance / EVM_TO_NATIVE,
   };

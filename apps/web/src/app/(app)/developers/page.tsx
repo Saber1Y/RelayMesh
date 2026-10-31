@@ -6,7 +6,7 @@ import { CopyButton } from "@/components/copy-button";
 import { PageShell } from "@/components/page-shell";
 import { TryEndpoint } from "@/components/try-endpoint";
 import { Mono, stagger } from "@/components/ui";
-import { batchRegistryAddress, getDb, nowSeconds, v3Config } from "@/server/services";
+import { batchContracts, batchLogAddress, batchRegistryAddress, getDb, nowSeconds, v3Config } from "@/server/services";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = {
@@ -203,7 +203,7 @@ const HASHES: { name: string; formula: string }[] = [
   { name: "Tree node", formula: 'keccak256("relaymesh.batch.node.v1\\n" + canonical([a, b]))   // a < b, sorted' },
 ];
 
-const VERIFY_SNIPPET = `import { createPublicClient, http, keccak256, stringToBytes } from "viem";
+const VERIFY_SNIPPET = `import { createPublicClient, http, keccak256, parseEventLogs, stringToBytes } from "viem";
 
 // Keys sorted, no whitespace, bigints as decimal strings.
 const canonical = (v) =>
@@ -220,15 +220,16 @@ const receiptHash = h("relaymesh.receipt.v1", receipt);
 let node = h("relaymesh.batch.leaf.v1", { intentHash: receipt.intentHash, receiptHash });
 for (const sibling of batch.proof) node = h("relaymesh.batch.node.v1", node < sibling ? [node, sibling] : [sibling, node]);
 
+// RelayMesh's batch contracts. Only their recordBatch emits BatchRecorded, and only for the relayer.
+const RELAYMESH = ${JSON.stringify(batchContracts().all)};
 const v3 = createPublicClient({ transport: http("${v3Config.evmRpcUrl}") });
-const onChain = await v3.readContract({
-  address: "${batchRegistryAddress() ?? "0x…"}",
-  abi: [{ type: "function", name: "getBatch", stateMutability: "view", inputs: [{ name: "root", type: "bytes32" }],
-    outputs: [{ type: "tuple", components: [{ name: "recordedAt", type: "uint64" }, { name: "blockNumber", type: "uint64" }, { name: "leafCount", type: "uint32" }] }] }],
-  functionName: "getBatch",
-  args: [node],
-});
-console.log(onChain.recordedAt > 0n ? "anchored on PortalDot V3" : "root not recorded: do not trust this receipt");`;
+const tx = await v3.getTransactionReceipt({ hash: batch.txHash });
+const recorded = parseEventLogs({
+  abi: [{ type: "event", name: "BatchRecorded", inputs: [{ name: "root", type: "bytes32", indexed: true },
+    { name: "recorder", type: "address", indexed: true }, { name: "leafCount", type: "uint32", indexed: false }] }],
+  logs: tx.logs,
+}).some((log) => RELAYMESH.includes(log.address.toLowerCase()) && log.args.root === node);
+console.log(tx.status === "success" && recorded ? "anchored on PortalDot V3" : "root not recorded: do not trust this receipt");`;
 
 const SECTIONS = [
   { id: "basics", label: "Basics" },
@@ -246,6 +247,7 @@ export default async function DevelopersPage() {
   const recent = await listRecentIntents(getDb(), 20).catch(() => []);
   const intentId = recent.find((i) => i.status === "SETTLED")?.intentId ?? FALLBACK_INTENT;
   const batchRegistry = batchRegistryAddress();
+  const batchLog = batchLogAddress();
   const intentRegistry = process.env.INTENT_REGISTRY_ADDRESS ?? null;
 
   return (
@@ -342,11 +344,19 @@ export default async function DevelopersPage() {
               </p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
+              {batchLog && (
+                <ContractCard
+                  name="ReceiptBatchLog"
+                  address={batchLog}
+                  role="Records a Merkle root per batch of receipts and bridge checks in an event, storing nothing, so each write costs about 0.013 tPOT and every transfer is anchored as it settles. Used for new batches."
+                  reads={["event BatchRecorded(root, recorder, leafCount)", "recorder() → address"]}
+                />
+              )}
               {batchRegistry && (
                 <ContractCard
                   name="ReceiptBatchRegistry"
                   address={batchRegistry}
-                  role="Holds a Merkle root per batch of receipts and bridge checks. Used for everything anchored since 29 October."
+                  role={`Holds a Merkle root per batch of receipts and bridge checks.${batchLog ? " Used from 29 October until ReceiptBatchLog replaced it; its batches still verify." : " Used for everything anchored since 29 October."}`}
                   reads={["getBatch(bytes32 root) → (recordedAt, blockNumber, leafCount)", "event BatchRecorded(root, recorder, leafCount)"]}
                 />
               )}
