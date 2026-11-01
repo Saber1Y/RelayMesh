@@ -195,3 +195,28 @@ Both receipts are in batch `0xed0d85f8003a04f809f56386739545b707049ebaebccaa0d37
 - **The fees reached the relayer.** Its EVM balance went from 81.300813 to 81.700813 tPOT, exactly two fees; its fallback account `5GnZaa…` is the one behind that balance (81.40 tPOT free, the EVM balance plus the 0.1 tPOT existential deposit).
 - **The receipts record the fee.** Both carry `serviceFee: { amount: "20000000000000", recipient: "5GnZaa…" }`, inside the hash that is anchored.
 - **In the browser.** `/verify?intent=0xda8ec12e3c612fde2e807e9b8f3e1e5b` reports "Matches the chain": the leaf folds with one sibling to the root recorded at #253608.
+
+## ReceiptBatchLog deployment (2026-11-01)
+
+The event-only batch contract: one `recordBatch(root, leafCount)` emits `BatchRecorded` and stores nothing, so a write skips the storage deposit.
+
+| Item | Value |
+| --- | --- |
+| Address | `0xe98d9eb582145035e40b97829fdef3a88b6db641` |
+| Deployment transaction | `0x524d8eda68625f0898225bf53435d196e3b4d5b41f3fa1b2f265b8d8c6f191e7` |
+| Block | #277380 |
+| Deployer and recorder | `0xD0Dd606e328E9402C056d50171CAcAAdFB2563e4` |
+| Cost | 17.34 tPOT (balance at #277379 minus balance at #277380) |
+| Runtime code | 464 bytes, equal to the compiled artifact with the recorder written into its immutable slot (`eth_getCode`) |
+
+The same command had run once before, seven blocks earlier: `0x971d45f0daa772c02078ad6349c1bcffd833b4d5`, transaction `0x1cb0dad7930f5645fdf9c051c1b4bb895834167ebd58f31c011b8ace3fadd69b` in block #277373, for 49.38 tPOT.
+Its code and recorder are identical, and it is not used.
+The second deployment cost less because Revive charges the code's storage deposit once per distinct code, and the first had already paid it.
+Together they cost 66.72 tPOT, leaving the relayer 11.12 tPOT.
+
+### How the deployment was verified
+
+- **The transaction succeeded.** `eth_getTransactionReceipt` returns status `success` and the address above.
+- **The code is the compiled contract.** The deploy script compares `eth_getCode` with the compiled runtime after filling in the recorder; the duplicate holds byte-for-byte the same code.
+- **Only the relayer can write.** `recorder()` returns the relayer address; a simulated `recordBatch` from the relayer succeeds and from any other account reverts.
+- **Nothing is recorded yet.** Neither address has emitted a `BatchRecorded` log.

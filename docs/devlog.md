@@ -488,4 +488,10 @@ What changed:
 Checked on V3 (read-only): the log contract's behaviour checks pass inside one `eth_call`, and the deployment is estimated at about 50 tPOT.
 Checked end to end on a local anvil chain: the real deploy script for both contracts, one receipt anchored in the old registry, a switch to the log, a crash after mining recovered from the event without a second write, and `/verify` reporting both receipts as matching and a tampered copy as a mismatch.
 
-`ReceiptBatchLog` is not deployed on V3 yet.
+### 2026-11-01: ReceiptBatchLog is deployed
+
+`ReceiptBatchLog` is deployed at `0xe98d9eb5…6db641` (block #277380), with the relayer as its only recorder; the deploy script confirmed its code and recorder, and a simulated write from any other account reverts.
+The deploy command ran twice, seven blocks apart, so an identical, unused copy sits at `0x971d45f0…33b4d5`.
+The first paid 49.38 tPOT, almost all the storage deposit for the code; the second cost 17.34 tPOT, because Revive charges that deposit once per distinct code.
+The relayer kept 11.12 tPOT, about 800 writes at 0.013 tPOT each.
+No batch has been written to it yet: the watcher and the web app need this branch and `RECEIPT_BATCH_LOG_ADDRESS` first.

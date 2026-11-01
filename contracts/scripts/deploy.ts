@@ -3,7 +3,8 @@
 // Requires DEPLOYER_PRIVATE_KEY (an EVM key funded with tPOT on the V3 EVM side). The batch contracts
 // fixes its recorder at deployment: BATCH_RECORDER_ADDRESS, or the deployer's own address if unset.
 // Estimates: IntentRegistry about 96 tPOT (2026-10-20), ReceiptBatchRegistry about 82 tPOT
-// (2026-10-29), ReceiptBatchLog about 50 tPOT (2026-10-31), mostly Revive's storage deposit for the code.
+// (2026-10-29), ReceiptBatchLog 49.38 tPOT (2026-11-01), mostly Revive's storage deposit for the code.
+// That deposit is charged once per distinct code: deploying identical code again cost 17.34 tPOT.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createWalletClient, encodeAbiParameters, encodeDeployData, formatEther, getAddress, http, type Abi, type Hex } from "viem";

@@ -166,7 +166,7 @@ Almost all of that 3.86 tPOT is the storage deposit for the one slot each batch 
 `ReceiptBatchLog` records the same root in an event and stores nothing, so a write costs about 0.013 tPOT (simulated on V3): one transfer's 0.2 tPOT fee pays for about 15 of them.
 With `RECEIPT_BATCH_LOG_ADDRESS` set, the watcher writes there and anchors each transfer as soon as it settles (`ANCHOR_BATCH_SIZE` defaults to 1); batching then only saves gas when several transfers settle together.
 Verification reads the root from the batch transaction's receipt, which works the same for both contracts, so everything in `ReceiptBatchRegistry` keeps verifying and is never anchored again.
-`ReceiptBatchLog` is built and checked on V3 and on a local chain, and not deployed yet (about 50 tPOT).
+`ReceiptBatchLog` is deployed at `0xe98d9eb582145035e40b97829fdef3a88b6db641` (block #277380, [evidence](docs/evidence.md)); no batch has been written to it yet.
 
 - Leaf: `keccak256("relaymesh.batch.leaf.v1\n" + {"intentHash","receiptHash"})`, the same canonical-JSON hashing as receipts.
 - Nodes: sorted-pair hashing under `relaymesh.batch.node.v1`, so a proof is just the sibling hashes; leaves and nodes never share a domain.
@@ -373,7 +373,7 @@ The core flow is proven on chain: real signed transfers were quoted, verified, f
 - **iBridge route.** Blocked on PortalDot: there is no public interface, and iBridge stays closed to third parties through demo day.
   RelayMesh keeps the provider slot and reports why it is unavailable.
 - **Relayer funding.** A `ReceiptBatchRegistry` batch costs 3.86 tPOT however many entries it holds, so the 0.2 tPOT fee covers anchoring in full only at about 20 transfers per batch.
-  Deploying `ReceiptBatchLog` (about 50 tPOT, once) fixes this: each write costs about 0.013 tPOT, so every transfer's fee more than pays for its own anchor.
+  `ReceiptBatchLog`, now deployed, fixes this once the watcher is switched to it: each write costs about 0.013 tPOT, so every transfer's fee more than pays for its own anchor.
   At testnet volume most batches hold one or two entries, and the relayer's 77.84 tPOT pays for about 20 more batches before it needs a top-up.
 - **A second route.** Ranking only becomes meaningful with more than one live provider.
 - **Automated UI tests.** The web app's flows are verified by hand in a browser against the live testnet; the core, database, watcher and receipt-checking logic have automated tests.
@@ -440,7 +440,7 @@ pnpm simulate:batch-registry  # read-only: behaviour checks and costs on V3
 pnpm simulate:batch-log  # the same for ReceiptBatchLog
 pnpm deploy:registry  # needs DEPLOYER_PRIVATE_KEY with tPOT
 pnpm deploy:batch-registry  # about 81 tPOT; recorder = BATCH_RECORDER_ADDRESS or the deployer
-pnpm deploy:batch-log  # about 50 tPOT; same recorder rule
+pnpm deploy:batch-log  # about 50 tPOT for new code; same recorder rule
 ```
 
 ## The one-flow demo
