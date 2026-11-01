@@ -4,12 +4,20 @@ import { loadWorkerConfig } from "./config";
 const BASE = { DATABASE_URL: "postgres://u:p@127.0.0.1:5432/relaymesh" };
 const KEY = `0x${"11".repeat(32)}`;
 const BATCH_REGISTRY = "0x00000000000000000000000000000000000000AA";
+const BATCH_LOG = "0x00000000000000000000000000000000000000BB";
 
 describe("worker configuration", () => {
   it("anchors in batches when the batch registry and relayer key are both set, with default thresholds", () => {
     const config = loadWorkerConfig({ ...BASE, RECEIPT_BATCH_REGISTRY_ADDRESS: BATCH_REGISTRY, RELAYER_PRIVATE_KEY: KEY });
-    expect(config.registry).toEqual({ address: BATCH_REGISTRY.toLowerCase(), privateKey: KEY });
+    expect(config.registry).toEqual({ address: BATCH_REGISTRY.toLowerCase(), privateKey: KEY, kind: "registry" });
     expect(config.batching).toEqual({ size: 20, maxWaitSeconds: 1_800, maxLeaves: 256 });
+  });
+
+  it("writes to the log contract when it is set, anchoring each receipt as soon as it settles by default", () => {
+    const config = loadWorkerConfig({ ...BASE, RECEIPT_BATCH_REGISTRY_ADDRESS: BATCH_REGISTRY, RECEIPT_BATCH_LOG_ADDRESS: BATCH_LOG, RELAYER_PRIVATE_KEY: KEY });
+    expect(config.registry).toEqual({ address: BATCH_LOG.toLowerCase(), privateKey: KEY, kind: "log" });
+    expect(config.batching).toEqual({ size: 1, maxWaitSeconds: 1_800, maxLeaves: 256 });
+    expect(loadWorkerConfig({ ...BASE, RECEIPT_BATCH_LOG_ADDRESS: BATCH_LOG, RELAYER_PRIVATE_KEY: KEY, ANCHOR_BATCH_SIZE: "8" }).batching.size).toBe(8);
   });
 
   it("keeps a server configured for per-intent IntentRegistry anchoring running, with anchoring off", () => {
@@ -19,6 +27,7 @@ describe("worker configuration", () => {
 
   it("rejects a batch registry without a key to pay for it, and inconsistent thresholds", () => {
     expect(() => loadWorkerConfig({ ...BASE, RECEIPT_BATCH_REGISTRY_ADDRESS: BATCH_REGISTRY })).toThrow(/without RELAYER_PRIVATE_KEY/);
+    expect(() => loadWorkerConfig({ ...BASE, RECEIPT_BATCH_LOG_ADDRESS: BATCH_LOG })).toThrow(/without RELAYER_PRIVATE_KEY/);
     expect(() => loadWorkerConfig({ ...BASE, ANCHOR_BATCH_SIZE: "300" })).toThrow(/ANCHOR_BATCH_MAX_LEAVES/);
     expect(() => loadWorkerConfig({ ...BASE, ANCHOR_BATCH_SIZE: "0" })).toThrow(/ANCHOR_BATCH_SIZE/);
   });

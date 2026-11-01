@@ -9,7 +9,9 @@
     "simulate-deploy": "tsx --env-file-if-exists=../.env scripts/simulate-deploy.ts",
     "deploy:registry": "tsx --env-file-if-exists=../.env scripts/deploy.ts",
     "simulate:batch-registry": "tsx --env-file-if-exists=../.env scripts/simulate-batch-registry.ts",
-    "deploy:batch-registry": "tsx --env-file-if-exists=../.env scripts/deploy.ts ReceiptBatchRegistry"
+    "deploy:batch-registry": "tsx --env-file-if-exists=../.env scripts/deploy.ts ReceiptBatchRegistry",
+    "simulate:batch-log": "tsx --env-file-if-exists=../.env scripts/simulate-batch-registry.ts ReceiptBatchLog",
+    "deploy:batch-log": "tsx --env-file-if-exists=../.env scripts/deploy.ts ReceiptBatchLog"
   },
   "dependencies": {
     "@relaymesh/chains": "workspace:*",
@@ -20,6 +22,7 @@
   },
   "exports": {
     "./abi/IntentRegistry": "./abi/IntentRegistry.ts",
-    "./abi/ReceiptBatchRegistry": "./abi/ReceiptBatchRegistry.ts"
+    "./abi/ReceiptBatchRegistry": "./abi/ReceiptBatchRegistry.ts",
+    "./abi/ReceiptBatchLog": "./abi/ReceiptBatchLog.ts"
   }
 }

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { BridgeChecker } from "@/components/bridge-checker";
 import { PageShell } from "@/components/page-shell";
 import { stagger } from "@/components/ui";
-import { v3Config } from "@/server/services";
+import { batchContracts, v3Config } from "@/server/services";
 
 export const metadata: Metadata = { title: "Bridge checker | RelayMesh" };
 
@@ -21,7 +21,7 @@ export default async function BridgePage({ searchParams }: { searchParams: Promi
             and the exact amount after the fee arrived on BSC. Each verified transfer is then anchored on PortalDot V3. Read-only: it never touches your funds or the bridge.
           </p>
         </div>
-        <BridgeChecker initialDeposit={deposit && DEPOSIT_ID.test(deposit) ? deposit : null} v3={{ rpcUrl: v3Config.evmRpcUrl, explorerUrl: v3Config.explorerUrl }} />
+        <BridgeChecker initialDeposit={deposit && DEPOSIT_ID.test(deposit) ? deposit : null} v3={{ rpcUrl: v3Config.evmRpcUrl, explorerUrl: v3Config.explorerUrl, batchContracts: batchContracts().all }} />
       </div>
     </PageShell>
   );

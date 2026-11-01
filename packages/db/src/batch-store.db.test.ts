@@ -78,12 +78,12 @@ describe("receipt batches", () => {
     await planReceiptBatch(db, plan); // identical re-plan is a no-op
     expect(await listUnconfirmedReceiptBatches(db, CONTRACT)).toEqual([{ contractAddress: CONTRACT, chainId: 420420777, root: plan.root, leafCount: 5, createdAt: NOW }]);
     const leaf = plan.leaves[2] as ReceiptBatchLeaf;
-    expect(await getReceiptBatchProof(db, leaf.intentId, CONTRACT)).toBeNull();
+    expect(await getReceiptBatchProof(db, leaf.intentId, [CONTRACT])).toBeNull();
 
     await recordReceiptBatchAnchor(db, { contractAddress: CONTRACT, root: plan.root, txHash: TX, blockNumber: 240_001n });
     await recordReceiptBatchAnchor(db, { contractAddress: CONTRACT, root: plan.root, txHash: TX, blockNumber: 240_001n });
     expect(await listUnconfirmedReceiptBatches(db, CONTRACT)).toEqual([]);
-    expect(await getReceiptBatchProof(db, leaf.intentId, CONTRACT)).toEqual({
+    expect(await getReceiptBatchProof(db, leaf.intentId, [CONTRACT])).toEqual({
       contractAddress: CONTRACT,
       chainId: 420420777,
       root: plan.root,
@@ -95,7 +95,7 @@ describe("receipt batches", () => {
       txHash: TX,
       blockNumber: 240_001n,
     });
-    expect(await getReceiptBatchProof(db, leaf.intentId, OTHER_CONTRACT)).toBeNull();
+    expect(await getReceiptBatchProof(db, leaf.intentId, [OTHER_CONTRACT])).toBeNull();
     await expectCode(recordReceiptBatchAnchor(db, { contractAddress: CONTRACT, root: plan.root, txHash: `0x${"78".repeat(32)}`, blockNumber: 1n }), "INTEGRITY_ERROR");
   });
 

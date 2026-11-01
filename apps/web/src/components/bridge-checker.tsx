@@ -1,12 +1,12 @@
 "use client";
 
 import { ArrowRight, ArrowSquareOut, CircleNotch, HourglassMedium, MagnifyingGlass, SealCheck, SealWarning, Clock } from "@phosphor-icons/react";
-import { receiptBatchRegistryAbi } from "@relaymesh/contracts/abi/ReceiptBatchRegistry";
 import { BRIDGE_CHECK_DOMAIN, bridgeCheckLeaf, formatBaseUnits, hashCanonical, merkleRootFromProof } from "@relaymesh/core";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createPublicClient, http, type Hex } from "viem";
 import { CopyButton } from "./copy-button";
 import { Button, inputClass, Mono, Panel } from "./ui";
+import { findBatchLog } from "@/lib/batch-log";
 import { explorerBlockUrl, shortHash, type Tone } from "@/lib/format";
 
 type Verdict = "verified" | "payout_pending" | "not_final" | "not_a_deposit";
@@ -104,6 +104,8 @@ function gap(seconds: number): string {
 interface V3 {
   rpcUrl: string;
   explorerUrl: string;
+  /** RelayMesh's batch contracts from this deployment's configuration; an anchor naming any other is rejected. */
+  batchContracts: Hex[];
 }
 
 export function BridgeChecker({ initialDeposit, v3 }: { initialDeposit: string | null; v3: V3 }) {
@@ -385,7 +387,8 @@ type OnChainCheck =
 /**
  * Where the verified transfer stands in RelayMesh's batches on PortalDot V3. For an anchored check the
  * browser does the work: it hashes the facts shown above, computes the leaf, folds RelayMesh's proof
- * and reads the root from ReceiptBatchRegistry itself.
+ * and finds that root in the BatchRecorded log of the batch transaction, from one of RelayMesh's own
+ * batch contracts as configured for this page (never the contract the API names alone).
  */
 function OnChain({ result, anchor, v3 }: { result: CheckResult; anchor: Anchor; v3: V3 }) {
   const client = useMemo(() => createPublicClient({ transport: http(v3.rpcUrl) }), [v3.rpcUrl]);
@@ -399,8 +402,9 @@ function OnChain({ result, anchor, v3 }: { result: CheckResult; anchor: Anchor; 
       const facts = { deposit: { ...result.deposit, id: `${result.deposit.id.block}-${result.deposit.id.index}` }, payout: result.assessment.payout };
       const factsMatch = hashCanonical(BRIDGE_CHECK_DOMAIN, facts) === anchor.checkHash;
       const root = merkleRootFromProof(bridgeCheckLeaf(anchor.checkHash), anchor.proof);
-      const batch = await client.readContract({ address: anchor.contract, abi: receiptBatchRegistryAbi, functionName: "getBatch", args: [root] });
-      return batch.recordedAt === 0n ? ({ kind: "mismatch" } as const) : ({ kind: "match", leafCount: batch.leafCount, factsMatch } as const);
+      const trusted = v3.batchContracts.some((c) => c.toLowerCase() === anchor.contract.toLowerCase());
+      const batch = trusted ? await findBatchLog(client, anchor.contract, anchor.txHash, root) : null;
+      return batch ? ({ kind: "match", leafCount: batch.leafCount, factsMatch } as const) : ({ kind: "mismatch" } as const);
     })()
       .catch((): OnChainCheck => ({ kind: "error" }))
       .then((next) => live && setCheck(next));
@@ -414,7 +418,7 @@ function OnChain({ result, anchor, v3 }: { result: CheckResult; anchor: Anchor; 
       <p className="font-semibold">On chain</p>
       {anchor.status === "queued" && (
         <p className="text-muted">
-          RelayMesh recorded this check and queued it for its next batch on PortalDot V3. Batches go out every 30 minutes, or sooner once 20 entries are waiting.
+          RelayMesh recorded this check and queued it for its next batch on PortalDot V3. Check again shortly.
         </p>
       )}
       {anchor.status === "batching" && <p className="text-muted">This check is in a batch being written to PortalDot V3 now. Check again in a minute.</p>}
@@ -423,20 +427,20 @@ function OnChain({ result, anchor, v3 }: { result: CheckResult; anchor: Anchor; 
           {check.kind === "checking" && (
             <p className="flex items-center gap-2 text-muted">
               <CircleNotch size={14} className="animate-spin text-accent" />
-              Folding the Merkle proof and reading the root from ReceiptBatchRegistry…
+              Folding the Merkle proof and finding the root in the batch transaction…
             </p>
           )}
           {check.kind === "match" && (
             <p className="flex items-start gap-2 text-positive">
               <SealCheck size={16} weight="fill" className="mt-0.5 shrink-0" />
               <span>
-                Anchored on PortalDot V3. Your browser folded the proof from this check’s fingerprint to a root ReceiptBatchRegistry holds, in a batch of {check.leafCount}{" "}
+                Anchored on PortalDot V3. Your browser folded the proof from this check’s fingerprint to a root RelayMesh’s batch contract recorded, in a batch of {check.leafCount}{" "}
                 {check.leafCount === 1 ? "entry" : "entries"}.
                 {!check.factsMatch && <span className="text-caution"> The facts shown re-hash differently: the anchored fingerprint is from this deposit’s first check.</span>}
               </span>
             </p>
           )}
-          {check.kind === "mismatch" && <p className="text-critical">The proof does not lead to a root recorded in ReceiptBatchRegistry. Do not rely on this anchor.</p>}
+          {check.kind === "mismatch" && <p className="text-critical">The proof does not lead to a root recorded by RelayMesh’s batch contract in this transaction. Do not rely on this anchor.</p>}
           {check.kind === "error" && <p className="text-caution">Could not read PortalDot V3 to confirm the batch. Try again in a moment.</p>}
           <dl className="grid gap-x-6 gap-y-2 text-[13px] sm:grid-cols-3">
             <Fact label="Batch root">

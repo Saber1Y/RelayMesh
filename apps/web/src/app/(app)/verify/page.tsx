@@ -2,11 +2,11 @@ import type { Metadata } from "next";
 import type { Hex } from "viem";
 import { listRecentIntents } from "@relaymesh/db";
 import { PageShell } from "@/components/page-shell";
-import { ReceiptVerifier, type VerifierExample } from "@/components/receipt-verifier";
+import { ReceiptVerifier, type BatchContract, type VerifierExample } from "@/components/receipt-verifier";
 import { stagger } from "@/components/ui";
 import { formatAmount } from "@/lib/format";
 import { HEX16 } from "@/server/http";
-import { batchRegistryAddress, getDb, v3Config } from "@/server/services";
+import { batchLogAddress, batchRegistryAddress, getDb, v3Config } from "@/server/services";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Verify a receipt | RelayMesh" };
@@ -19,6 +19,13 @@ function registryConfig(): { address: Hex; fromBlock: bigint | null } | null {
   if (!address || !HEX_ADDRESS.test(address)) return null;
   const from = process.env.INTENT_REGISTRY_DEPLOY_BLOCK;
   return { address: address as Hex, fromBlock: from && /^\d+$/.test(from) ? BigInt(from) : null };
+}
+
+/** Every batch contract whose batches still verify, newest first. */
+function batchContractList(): BatchContract[] {
+  const log = batchLogAddress();
+  const registry = batchRegistryAddress();
+  return [...(log ? [{ address: log, name: "ReceiptBatchLog" as const }] : []), ...(registry ? [{ address: registry, name: "ReceiptBatchRegistry" as const }] : [])];
 }
 
 export default async function VerifyPage({ searchParams }: { searchParams: Promise<{ intent?: string }> }) {
@@ -45,7 +52,7 @@ export default async function VerifyPage({ searchParams }: { searchParams: Promi
           rpcUrl={v3Config.evmRpcUrl}
           explorerUrl={v3Config.explorerUrl}
           registry={registry && { address: registry.address, fromBlock: registry.fromBlock?.toString() ?? null }}
-          batchRegistry={batchRegistryAddress()}
+          batchContracts={batchContractList()}
           initialIntentId={intent && HEX16.test(intent) ? intent : null}
           examples={examples}
         />

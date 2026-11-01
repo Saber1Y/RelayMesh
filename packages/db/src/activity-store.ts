@@ -1,4 +1,4 @@
-import { desc, sql } from "drizzle-orm";
+import { desc, inArray, sql } from "drizzle-orm";
 import type { Hex } from "viem";
 import { INTENT_STATUSES, isChainId, type ChainId, type IntentStatus } from "@relaymesh/core";
 import type { Db } from "./client";
@@ -105,13 +105,14 @@ export interface AnchoredBatch {
   leafCount: number;
 }
 
-/** Every batch of this contract with a mined transaction, oldest first. */
-export async function listAnchoredBatches(db: Db, contractAddress: Hex): Promise<AnchoredBatch[]> {
+/** Every batch of these contracts with a mined transaction, oldest first. */
+export async function listAnchoredBatches(db: Db, contracts: readonly Hex[]): Promise<AnchoredBatch[]> {
+  if (contracts.length === 0) return [];
   const rows = await db
     .select({ txHash: receiptBatchAnchors.txHash, leafCount: receiptBatches.leafCount })
     .from(receiptBatchAnchors)
     .innerJoin(receiptBatches, sql`${receiptBatches.contractAddress} = ${receiptBatchAnchors.contractAddress} AND ${receiptBatches.root} = ${receiptBatchAnchors.root}`)
-    .where(sql`${receiptBatchAnchors.contractAddress} = ${contractAddress}`)
+    .where(inArray(receiptBatchAnchors.contractAddress, [...contracts]))
     .orderBy(receiptBatchAnchors.blockNumber);
   return rows.map((r) => ({ txHash: r.txHash as Hex, leafCount: r.leafCount }));
 }

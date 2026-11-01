@@ -20,7 +20,7 @@ import {
   selectQuote,
 } from "@relaymesh/db";
 import type { Logger } from "./log";
-import { RelayerFundsError, type BatchRegistryClient, type BatchState, type MinedTx } from "./registry";
+import { RelayerFundsError, type BatchRegistryClient, type MinedTx } from "./registry";
 import { runPass, SOURCE_SCAN_CURSOR, type WatcherContext } from "./watcher";
 
 // Test doubles: an in-memory V3 chain and registry. They model only what the watcher reads, so the
@@ -108,10 +108,11 @@ class FakeChain implements V3ChainReader {
 }
 
 class FakeBatchRegistry implements BatchRegistryClient {
-  address = "0x00000000000000000000000000000000000000aa" as Hex;
+  constructor(readonly address: Hex = "0x00000000000000000000000000000000000000aa") {}
+  kind = "log" as const;
   chainId = 420420777;
   recorder = "0x00000000000000000000000000000000000000bb" as Hex;
-  batches = new Map<Hex, BatchState & MinedTx>();
+  batches = new Map<Hex, MinedTx & { leafCount: number }>();
   /** Roots of every mined recordBatch, in order. */
   writes: Hex[] = [];
   /** When set, every write fails the way an unfunded relayer's does; `refused` counts those attempts. */
@@ -124,10 +125,6 @@ class FakeBatchRegistry implements BatchRegistryClient {
   async contractRecorder() {
     return this.recorder;
   }
-  async getBatch(root: Hex) {
-    const b = this.batches.get(root);
-    return b ? { recordedAt: b.recordedAt, blockNumber: b.blockNumber, leafCount: b.leafCount } : null;
-  }
   async recordBatch(root: Hex, leafCount: number) {
     if (this.crash === "before_sending") {
       this.crash = null;
@@ -137,9 +134,10 @@ class FakeBatchRegistry implements BatchRegistryClient {
       this.refused++;
       throw new RelayerFundsError(this.recorder, 1_597_805_812_053_544_000n, 4_892_650_567_171_883_400n);
     }
-    if (this.batches.has(root)) throw new Error(`BatchAlreadyRecorded(${root})`);
+    // The log contract would accept a second write of a root; here it would mean a lost recovery.
+    if (this.batches.has(root)) throw new Error(`root ${root} written twice`);
     const tx = { txHash: hash32(++this.block, "cc"), blockNumber: this.block };
-    this.batches.set(root, { ...tx, recordedAt: BigInt(clock), leafCount });
+    this.batches.set(root, { ...tx, leafCount });
     this.writes.push(root);
     if (this.crash === "after_mining") {
       this.crash = null;
@@ -147,9 +145,8 @@ class FakeBatchRegistry implements BatchRegistryClient {
     }
     return tx;
   }
-  async findBatchEvent(root: Hex, blockNumber: bigint) {
-    const b = this.batches.get(root);
-    return b && b.blockNumber === blockNumber ? { txHash: b.txHash, blockNumber: b.blockNumber } : null;
+  async findBatch(root: Hex) {
+    return this.batches.get(root) ?? null;
   }
 }
 
@@ -281,7 +278,7 @@ describe("source confirmation and destination measurement", () => {
       details: { balanceBefore: "5", balanceAfter: (5n + EXPECTED).toString() },
     });
 
-    expect(await getReceiptBatchProof(db, intent.intentId, (registry as FakeBatchRegistry).address)).toMatchObject({ leafCount: 1, proof: [] });
+    expect(await getReceiptBatchProof(db, intent.intentId, [(registry as FakeBatchRegistry).address])).toMatchObject({ leafCount: 1, proof: [] });
     expect(registry?.writes).toHaveLength(1);
 
     // Idempotent: nothing more happens on the next pass.
@@ -552,7 +549,7 @@ describe("batch anchoring", () => {
   }
 
   const fake = () => registry as FakeBatchRegistry;
-  const proofOf = (intentId: Hex) => getReceiptBatchProof(db, intentId, new FakeBatchRegistry().address);
+  const proofOf = (intentId: Hex) => getReceiptBatchProof(db, intentId, [new FakeBatchRegistry().address]);
 
   it("is skipped when the registry is not configured", async () => {
     registry = null;
@@ -592,7 +589,7 @@ describe("batch anchoring", () => {
     expect(fake().writes).toHaveLength(1);
     const root = fake().writes[0] as Hex;
     expect(await proofOf(intent.intentId)).toMatchObject({ root, leafCount: 2 });
-    const bridge = await getBridgeCheckAnchor(db, checkHash, fake().address);
+    const bridge = await getBridgeCheckAnchor(db, checkHash, [fake().address]);
     expect(bridge).toMatchObject({ status: "anchored", root, leafCount: 2, leafHash: bridgeCheckLeaf(checkHash) });
     expect(bridge?.status === "anchored" && verifyMerkleProof(bridge.leafHash, bridge.proof, root)).toBe(true);
   });
@@ -659,7 +656,7 @@ describe("batch anchoring", () => {
     fake().crash = "before_sending";
     const { intent } = await settledIntent();
     const [planned] = await listUnconfirmedReceiptBatches(db, fake().address);
-    fake().batches.set(planned?.root as Hex, { txHash: hash32(1n, "cc"), blockNumber: 501n, recordedAt: BigInt(clock), leafCount: 7 });
+    fake().batches.set(planned?.root as Hex, { txHash: hash32(1n, "cc"), blockNumber: 501n, leafCount: 7 });
     expect(await runPass(ctx())).toMatchObject({ anchored: 0, errors: 1 });
     expect(await proofOf(intent.intentId)).toBeNull();
   });
@@ -682,6 +679,23 @@ describe("batch anchoring", () => {
     expect(await runPass(ctx())).toMatchObject({ anchored: 1, errors: 0 });
     expect(await proofOf(legacy.intent.intentId)).toBeNull();
     expect(await proofOf(fresh.intent.intentId)).toMatchObject({ leafCount: 1 });
+  });
+
+  it("never re-anchors a receipt mined in an earlier batch contract after switching to a new one", async () => {
+    const old = await settledIntent(93n); // anchored in the first contract as it settles
+    const oldContract = fake().address;
+    const planned = await (async () => {
+      fake().crash = "before_sending"; // planned in the old contract, never mined
+      return settledIntent(95n);
+    })();
+    expect(await listUnconfirmedReceiptBatches(db, oldContract)).toHaveLength(1);
+
+    registry = new FakeBatchRegistry("0x00000000000000000000000000000000000000cc");
+    expect(await runPass(ctx())).toMatchObject({ anchored: 1, errors: 0 });
+    expect(fake().writes).toHaveLength(1);
+    expect(await getReceiptBatchProof(db, planned.intent.intentId, [fake().address])).toMatchObject({ leafCount: 1 });
+    expect(await getReceiptBatchProof(db, old.intent.intentId, [fake().address])).toBeNull();
+    expect(await getReceiptBatchProof(db, old.intent.intentId, [fake().address, oldContract])).toMatchObject({ contractAddress: oldContract });
   });
 
   it("pauses anchoring with one warning when the relayer cannot pay, then resumes once funded", async () => {

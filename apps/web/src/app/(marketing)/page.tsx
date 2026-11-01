@@ -11,7 +11,12 @@ import { getDb } from "@/server/services";
 export const dynamic = "force-dynamic";
 
 const EVIDENCE_URL = "https://github.com/Saber1Y/RelayMesh/blob/main/docs/evidence.md";
-const BATCH_REGISTRY = process.env.RECEIPT_BATCH_REGISTRY_ADDRESS ?? null;
+// The contract new batches go to: ReceiptBatchLog once deployed, ReceiptBatchRegistry before it.
+const BATCH_CONTRACT = process.env.RECEIPT_BATCH_LOG_ADDRESS
+  ? { name: "ReceiptBatchLog", address: process.env.RECEIPT_BATCH_LOG_ADDRESS }
+  : process.env.RECEIPT_BATCH_REGISTRY_ADDRESS
+    ? { name: "ReceiptBatchRegistry", address: process.env.RECEIPT_BATCH_REGISTRY_ADDRESS }
+    : null;
 
 const FLOW = [
   {
@@ -42,7 +47,7 @@ const FLOW = [
 
 const STATUS: { name: string; tone: Tone; label: string; body: string }[] = [
   { name: "Substrate to EVM transfers on V3", tone: "positive", label: "Live", body: "Quoted, signed, finalized and measured on chain, then receipted." },
-  { name: "Receipts anchored in batches", tone: "positive", label: "Live", body: "Settled receipts go on chain as one Merkle root per batch in ReceiptBatchRegistry, each with a proof anyone can fold." },
+  { name: "Receipts anchored in batches", tone: "positive", label: "Live", body: "Settled receipts go on chain as Merkle roots, each receipt with a proof anyone can fold against the recording transaction." },
   { name: "Checks of PortalDot bridge transfers", tone: "positive", label: "Live", body: "Read-only: POT deposits on Portaldot mainnet against WPOT payouts on BSC, and each verified check anchored in the same batches." },
   { name: "A fee that funds anchoring", tone: "positive", label: "Live", body: "Each transfer pays 0.2 tPOT to the relayer in the same signed call, recorded in its receipt." },
   { name: "iBridge route", tone: "neutral", label: "Waiting", body: "PortalDot has confirmed iBridge stays closed to third parties through demo day." },
@@ -147,7 +152,7 @@ function tpot(v: bigint, decimals = 2): string {
 
 function FeeLedger({ ledger }: { ledger: Economics }) {
   const fee = ledger.feePerTransfer;
-  const perBatch = ledger.batches > 0 ? ledger.anchoringSpent / BigInt(ledger.batches) : null;
+  const perBatch = ledger.latestBatchCost;
   const breakEven = fee && perBatch ? (perBatch + fee - 1n) / fee : null;
   const covered = ledger.anchoringSpent > 0n ? Number((ledger.feesCollected * 1000n) / ledger.anchoringSpent) / 10 : null;
   const figures = [
@@ -179,8 +184,13 @@ function FeeLedger({ ledger }: { ledger: Economics }) {
           </dl>
           {perBatch !== null && (
             <p className="max-w-[60ch] text-sm leading-relaxed text-muted text-pretty">
-              A batch costs about {tpot(perBatch)} however many entries it holds, up to 256.
-              {breakEven !== null && <> At {breakEven.toString()} transfers per batch the fee covers it in full; with full batches of 256 it could be about {tpot(perBatch / 256n, 3)}.</>}
+              The latest batch cost {tpot(perBatch, perBatch < 10n ** 12n ? 3 : 2)}, the same however many entries it holds, up to 256.
+              {breakEven !== null &&
+                (breakEven <= 1n ? (
+                  <> One transfer’s fee covers a batch on its own, so every transfer is anchored as soon as it settles.</>
+                ) : (
+                  <> At {breakEven.toString()} transfers per batch the fee covers it in full; with full batches of 256 it could be about {tpot(perBatch / 256n, 3)}.</>
+                ))}
               {covered !== null && <> So far, at testnet volume, fees have covered {covered}% of anchoring.</>}
             </p>
           )}
@@ -354,9 +364,9 @@ export default async function LandingPage() {
                 Read the evidence
                 <ArrowUpRight size={13} />
               </a>
-              {BATCH_REGISTRY && (
+              {BATCH_CONTRACT && (
                 <span className="inline-flex items-center gap-1.5 text-muted">
-                  ReceiptBatchRegistry <span className="font-mono text-[12px] text-ink">{shortHash(BATCH_REGISTRY, 8, 6)}</span>
+                  {BATCH_CONTRACT.name} <span className="font-mono text-[12px] text-ink">{shortHash(BATCH_CONTRACT.address, 8, 6)}</span>
                 </span>
               )}
             </div>

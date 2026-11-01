@@ -15,6 +15,7 @@ beforeEach(async () => {
 });
 
 const CONTRACT = "0x00000000000000000000000000000000000000ab" as Hex;
+const NEXT_CONTRACT = "0x00000000000000000000000000000000000000cd" as Hex;
 const NOW = 1_793_270_000;
 
 // A verified bridge transfer shaped like the real 33 POT deposit (832820-1) and its 32.01 WPOT payout.
@@ -48,7 +49,7 @@ describe("bridge checks", () => {
     await recordBridgeCheck(db, c);
     await recordBridgeCheck(db, c); // a repeat check of the same deposit is a no-op
     expect(await listPendingBridgeChecks(db, CONTRACT, 10)).toEqual([{ checkHash: c.checkHash, checkedAt: NOW }]);
-    expect(await getBridgeCheckAnchor(db, c.checkHash, CONTRACT)).toEqual({ status: "queued" });
+    expect(await getBridgeCheckAnchor(db, c.checkHash, [CONTRACT])).toEqual({ status: "queued" });
     expect(await findBridgeCheckHash(db, "832820-1")).toBe(c.checkHash);
     expect(await findBridgeCheckHash(db, "832820-2")).toBeNull();
   });
@@ -68,10 +69,27 @@ describe("bridge checks", () => {
     const tree = buildMerkleTree(leaves.map((l) => l.leafHash));
     await planReceiptBatch(db, { contractAddress: CONTRACT, chainId: 420420777, root: tree.root, createdAt: NOW, leaves: [], bridgeLeaves: leaves.map((l) => ({ ...l, proof: merkleProof(tree, l.leafHash) })) });
     expect(await listPendingBridgeChecks(db, CONTRACT, 10)).toEqual([]);
-    expect(await getBridgeCheckAnchor(db, a.checkHash, CONTRACT)).toMatchObject({ status: "batching", root: tree.root });
+    expect(await getBridgeCheckAnchor(db, a.checkHash, [CONTRACT])).toMatchObject({ status: "batching", root: tree.root });
 
     await recordReceiptBatchAnchor(db, { contractAddress: CONTRACT, root: tree.root, txHash: `0x${"77".repeat(32)}` as Hex, blockNumber: 244_000n });
-    expect(await getBridgeCheckAnchor(db, b.checkHash, CONTRACT)).toMatchObject({ status: "anchored", root: tree.root, leafCount: 2, blockNumber: 244_000n });
+    expect(await getBridgeCheckAnchor(db, b.checkHash, [CONTRACT])).toMatchObject({ status: "anchored", root: tree.root, leafCount: 2, blockNumber: 244_000n });
+  });
+
+  it("is not anchored again in a later batch contract once a batch holding it is mined", async () => {
+    const mined = check(832_820);
+    const planned = check(833_349, 2_700_000_000_000_000n);
+    await recordBridgeCheck(db, mined);
+    await recordBridgeCheck(db, planned);
+    for (const c of [mined, planned]) {
+      const leafHash = bridgeCheckLeaf(c.checkHash);
+      await planReceiptBatch(db, { contractAddress: CONTRACT, chainId: 420420777, root: leafHash, createdAt: NOW, leaves: [], bridgeLeaves: [{ checkHash: c.checkHash, leafHash, proof: [] }] });
+    }
+    await recordReceiptBatchAnchor(db, { contractAddress: CONTRACT, root: bridgeCheckLeaf(mined.checkHash), txHash: `0x${"77".repeat(32)}` as Hex, blockNumber: 244_000n });
+
+    // A batch planned but never mined in the old contract does not hold the check back from the new one.
+    expect(await listPendingBridgeChecks(db, NEXT_CONTRACT, 10)).toEqual([{ checkHash: planned.checkHash, checkedAt: NOW }]);
+    expect(await getBridgeCheckAnchor(db, mined.checkHash, [NEXT_CONTRACT, CONTRACT])).toMatchObject({ status: "anchored", contractAddress: CONTRACT });
+    expect(await getBridgeCheckAnchor(db, mined.checkHash, [NEXT_CONTRACT])).toEqual({ status: "queued" });
   });
 
   it("refuses a batch whose bridge leaf does not commit to its check", async () => {
@@ -83,6 +101,6 @@ describe("bridge checks", () => {
   });
 
   it("knows nothing of a check RelayMesh never recorded", async () => {
-    expect(await getBridgeCheckAnchor(db, check().checkHash, CONTRACT)).toBeNull();
+    expect(await getBridgeCheckAnchor(db, check().checkHash, [CONTRACT])).toBeNull();
   });
 });

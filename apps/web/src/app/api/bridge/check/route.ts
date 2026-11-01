@@ -5,7 +5,7 @@ import { assessBridgeTransfer, bridgeCheckFacts, expectedPayout, hashBridgeCheck
 import { findBridgeCheckHash, getBridgeCheckAnchor, recordBridgeCheck } from "@relaymesh/db";
 import type { Hex } from "viem";
 import { errorResponse, handleError, json } from "@/server/http";
-import { batchRegistryAddress, bridgeConfig, getBscClient, getDb, getMainnetApi, nowSeconds } from "@/server/services";
+import { batchContracts, bridgeConfig, getBscClient, getDb, getMainnetApi, nowSeconds } from "@/server/services";
 
 export const runtime = "nodejs";
 
@@ -20,21 +20,21 @@ function sameAccount(a: string, b: string): boolean {
 }
 
 /**
- * Queues a fully verified transfer for the watcher's next batch in ReceiptBatchRegistry and reports
+ * Queues a fully verified transfer for the watcher's next batch and reports
  * where it stands. The first verification of a deposit is the one anchored, so the status is for the
  * check hash recorded for this deposit. The check itself stands without this, so a database failure
  * is logged and reported as no anchor rather than failing the check.
  */
 async function anchorOf(deposit: BridgeDeposit, assessment: BridgeAssessment, checkHash: Hex) {
-  const contract = batchRegistryAddress();
-  if (!contract || assessment.verdict !== "verified" || assessment.problems.length > 0 || !assessment.payout) return null;
+  const contracts = batchContracts();
+  if (!contracts.current || assessment.verdict !== "verified" || assessment.problems.length > 0 || !assessment.payout) return null;
   const depositId = `${deposit.id.block}-${deposit.id.index}`;
   try {
     const db = getDb();
     await recordBridgeCheck(db, { checkHash, depositId, payoutTxHash: assessment.payout.txHash, facts: bridgeCheckFacts(deposit, assessment.payout), checkedAt: nowSeconds() });
     const recorded = (await findBridgeCheckHash(db, depositId)) ?? checkHash;
-    const status = await getBridgeCheckAnchor(db, recorded, contract);
-    return status && { checkHash: recorded, contract, ...status };
+    const status = await getBridgeCheckAnchor(db, recorded, contracts.all);
+    return status && { checkHash: recorded, contract: "contractAddress" in status ? status.contractAddress : contracts.current, ...status };
   } catch (error) {
     console.error("bridge check anchoring failed", { depositId, error });
     return null;

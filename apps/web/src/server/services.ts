@@ -91,8 +91,26 @@ export function nowSeconds(): number {
   return Math.floor(Date.now() / 1000);
 }
 
-/** ReceiptBatchRegistry, from the same environment the watcher anchors with; null when not deployed. */
-export function batchRegistryAddress(): Hex | null {
-  const address = process.env.RECEIPT_BATCH_REGISTRY_ADDRESS;
+function addressFromEnv(name: string): Hex | null {
+  const address = process.env[name];
   return address && /^0x[0-9a-fA-F]{40}$/.test(address) ? (address.toLowerCase() as Hex) : null;
+}
+
+/** ReceiptBatchRegistry (stores each root), from the same environment the watcher anchors with; null when not deployed. */
+export function batchRegistryAddress(): Hex | null {
+  return addressFromEnv("RECEIPT_BATCH_REGISTRY_ADDRESS");
+}
+
+/** ReceiptBatchLog (emits each root, stores nothing); null when not deployed. */
+export function batchLogAddress(): Hex | null {
+  return addressFromEnv("RECEIPT_BATCH_LOG_ADDRESS");
+}
+
+/**
+ * The batch contracts RelayMesh anchors in: `current` takes new batches (the log when deployed, as for
+ * the watcher), `all` are every contract whose batches still verify, newest first.
+ */
+export function batchContracts(): { current: Hex | null; all: Hex[] } {
+  const all = [batchLogAddress(), batchRegistryAddress()].filter((a): a is Hex => a !== null);
+  return { current: all[0] ?? null, all };
 }
