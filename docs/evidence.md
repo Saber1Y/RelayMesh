@@ -202,16 +202,17 @@ The event-only batch contract: one `recordBatch(root, leafCount)` emits `BatchRe
 
 | Item | Value |
 | --- | --- |
-| Address | `0xe98d9eb582145035e40b97829fdef3a88b6db641` |
-| Deployment transaction | `0x524d8eda68625f0898225bf53435d196e3b4d5b41f3fa1b2f265b8d8c6f191e7` |
-| Block | #277380 |
+| Address | `0x971d45f0daa772c02078ad6349c1bcffd833b4d5` |
+| Deployment transaction | `0x1cb0dad7930f5645fdf9c051c1b4bb895834167ebd58f31c011b8ace3fadd69b` |
+| Block | #277373 |
 | Deployer and recorder | `0xD0Dd606e328E9402C056d50171CAcAAdFB2563e4` |
-| Cost | 17.34 tPOT (balance at #277379 minus balance at #277380) |
+| Cost | 49.38 tPOT (balance at #277372 minus balance at #277373), almost all the storage deposit for the code |
 | Runtime code | 464 bytes, equal to the compiled artifact with the recorder written into its immutable slot (`eth_getCode`) |
 
-The same command had run once before, seven blocks earlier: `0x971d45f0daa772c02078ad6349c1bcffd833b4d5`, transaction `0x1cb0dad7930f5645fdf9c051c1b4bb895834167ebd58f31c011b8ace3fadd69b` in block #277373, for 49.38 tPOT.
+The same command was run again from a second session seven blocks later: `0xe98d9eb582145035e40b97829fdef3a88b6db641`, transaction `0x524d8eda68625f0898225bf53435d196e3b4d5b41f3fa1b2f265b8d8c6f191e7` in block #277380, for 17.34 tPOT.
 Its code and recorder are identical, and it is not used.
-The second deployment cost less because Revive charges the code's storage deposit once per distinct code, and the first had already paid it.
+The duplicate cost less because Revive charges the code's storage deposit once per distinct code, and the first had already paid it.
+An earlier attempt at the first deployment timed out while sending (`eth_sendRawTransaction` gave no answer); the relayer's nonce stayed at 15 and no code appeared, so it was resent with the same nonce, and only one transaction with that nonce could ever be mined.
 Together they cost 66.72 tPOT, leaving the relayer 11.12 tPOT.
 
 ### How the deployment was verified

@@ -166,7 +166,7 @@ Almost all of that 3.86 tPOT is the storage deposit for the one slot each batch 
 `ReceiptBatchLog` records the same root in an event and stores nothing, so a write costs about 0.013 tPOT (simulated on V3): one transfer's 0.2 tPOT fee pays for about 15 of them.
 With `RECEIPT_BATCH_LOG_ADDRESS` set, the watcher writes there and anchors each transfer as soon as it settles (`ANCHOR_BATCH_SIZE` defaults to 1); batching then only saves gas when several transfers settle together.
 Verification reads the root from the batch transaction's receipt, which works the same for both contracts, so everything in `ReceiptBatchRegistry` keeps verifying and is never anchored again.
-`ReceiptBatchLog` is deployed at `0xe98d9eb582145035e40b97829fdef3a88b6db641` (block #277380, [evidence](docs/evidence.md)); no batch has been written to it yet.
+`ReceiptBatchLog` is deployed at `0x971d45f0daa772c02078ad6349c1bcffd833b4d5` (block #277373, [evidence](docs/evidence.md)).
 
 - Leaf: `keccak256("relaymesh.batch.leaf.v1\n" + {"intentHash","receiptHash"})`, the same canonical-JSON hashing as receipts.
 - Nodes: sorted-pair hashing under `relaymesh.batch.node.v1`, so a proof is just the sibling hashes; leaves and nodes never share a domain.
