@@ -1,5 +1,5 @@
 import type { ApiPromise } from "@polkadot/api";
-import { createPublicClient, http, parseAbiItem, type Hex, type PublicClient } from "viem";
+import { createPublicClient, decodeEventLog, http, parseAbiItem, type Hex, type PublicClient } from "viem";
 import type { BridgeDeposit, BridgeFee, BridgePayout, DepositId } from "@relaymesh/core";
 
 /**
@@ -111,6 +111,8 @@ const BSC_FAST_BLOCK_SECONDS = 0.4;
  */
 const LOG_SEARCH_ATTEMPTS = 6;
 const LOG_SEARCH_ROUNDS = 4;
+/** Payout ranges searched at once; more would trip the public endpoint's rate limit. */
+const RANGES_AT_ONCE = 3;
 
 async function searchLogs<T extends { transactionHash: Hex; logIndex: number }>(search: () => Promise<T[]>): Promise<T[]> {
   let answered = false;
@@ -173,21 +175,23 @@ export async function findBridgePayouts(
   query: { after: number; amount: bigint; recipient?: Hex | null },
 ): Promise<BridgePayout[]> {
   const [head, finalized] = await Promise.all([client.getBlock(), client.getBlock({ blockTag: "finalized" })]);
-  let from = await firstBlockAtOrAfter(client, query.after, { number: head.number, timestamp: Number(head.timestamp) });
+  const from = await firstBlockAtOrAfter(client, query.after, { number: head.number, timestamp: Number(head.timestamp) });
   const last = from + BigInt(Math.ceil(config.maxPayoutDelaySeconds / BSC_FAST_BLOCK_SECONDS));
   const until = last < head.number ? last : head.number;
-  const found: BridgePayout[] = [];
-  while (from <= until) {
-    const to = from + BSC_LOG_SPAN < until ? from + BSC_LOG_SPAN : until;
+  const ranges: [bigint, bigint][] = [];
+  for (let start = from; start <= until; start += BSC_LOG_SPAN + 1n) ranges.push([start, start + BSC_LOG_SPAN < until ? start + BSC_LOG_SPAN : until]);
+
+  async function payoutsIn([fromBlock, toBlock]: [bigint, bigint]): Promise<BridgePayout[]> {
     const logs = await searchLogs(() =>
       client.getLogs({
         address: config.bsc.token,
         event: TRANSFER,
         args: { from: config.bsc.reserve, ...(query.recipient && { to: query.recipient }) },
-        fromBlock: from,
-        toBlock: to,
+        fromBlock,
+        toBlock,
       }),
     );
+    const found: BridgePayout[] = [];
     for (const log of logs) {
       if (log.args.value !== query.amount || !log.args.to) continue;
       const block = await client.getBlock({ blockNumber: log.blockNumber });
@@ -195,8 +199,47 @@ export async function findBridgePayouts(
       if (time < query.after) continue;
       found.push({ txHash: log.transactionHash, blockNumber: log.blockNumber, time, recipient: log.args.to, amount: log.args.value, finalized: log.blockNumber <= finalized.number });
     }
-    if (found.length > 0) break;
-    from = to + 1n;
+    return found;
   }
-  return found;
+
+  // A few ranges at a time, in order: the earliest range with a match decides, so a later payout of
+  // the same amount is never taken while an earlier range is still unanswered.
+  for (let i = 0; i < ranges.length; i += RANGES_AT_ONCE) {
+    const results = await Promise.all(ranges.slice(i, i + RANGES_AT_ONCE).map(payoutsIn));
+    const earliest = results.find((r) => r.length > 0);
+    if (earliest) return earliest;
+  }
+  return [];
+}
+
+/**
+ * Re-reads a payout already matched to a deposit, from its transaction on BSC: one receipt instead of
+ * a search. Null unless that transaction holds a WPOT transfer from the bridge's reserve.
+ */
+export async function readBridgePayout(client: PublicClient, config: PortaldotBridgeConfig, txHash: Hex): Promise<BridgePayout | null> {
+  let receipt = null;
+  // Like log searches, some nodes behind the public endpoint do not know older transactions.
+  for (let attempt = 0; attempt < LOG_SEARCH_ATTEMPTS && !receipt; attempt++) receipt = await client.getTransactionReceipt({ hash: txHash }).catch(() => null);
+  if (!receipt || receipt.status !== "success") return null;
+  const [block, finalized] = await Promise.all([client.getBlock({ blockNumber: receipt.blockNumber }), client.getBlock({ blockTag: "finalized" })]);
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== config.bsc.token.toLowerCase()) continue;
+    const decoded = (() => {
+      try {
+        return decodeEventLog({ abi: [TRANSFER], data: log.data, topics: log.topics });
+      } catch {
+        return null;
+      }
+    })();
+    if (!decoded || decoded.args.from.toLowerCase() !== config.bsc.reserve.toLowerCase()) continue;
+    return {
+      txHash: receipt.transactionHash,
+      blockNumber: receipt.blockNumber,
+      time: Number(block.timestamp),
+      recipient: decoded.args.to,
+      amount: decoded.args.value,
+      finalized: receipt.blockNumber <= finalized.number,
+    };
+  }
+  return null;
 }

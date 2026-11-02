@@ -3,7 +3,7 @@ import type { Hex } from "viem";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { bridgeCheckFacts, bridgeCheckLeaf, buildMerkleTree, hashBridgeCheck, isRelayMeshError, merkleProof, type BridgeDeposit, type BridgePayout } from "@relaymesh/core";
 import { planReceiptBatch, recordReceiptBatchAnchor } from "./batch-store";
-import { findBridgeCheckHash, getBridgeCheckAnchor, listPendingBridgeChecks, recordBridgeCheck, type BridgeCheckRecord } from "./bridge-store";
+import { findBridgeCheck, findBridgeCheckHash, getBridgeCheckAnchor, listPendingBridgeChecks, recordBridgeCheck, type BridgeCheckRecord } from "./bridge-store";
 import { connectDb } from "./client";
 
 const { db, close } = connectDb(process.env.TEST_DATABASE_URL as string, { max: 4 });
@@ -52,6 +52,8 @@ describe("bridge checks", () => {
     expect(await getBridgeCheckAnchor(db, c.checkHash, [CONTRACT])).toEqual({ status: "queued" });
     expect(await findBridgeCheckHash(db, "832820-1")).toBe(c.checkHash);
     expect(await findBridgeCheckHash(db, "832820-2")).toBeNull();
+    expect(await findBridgeCheck(db, "832820-1")).toEqual({ checkHash: c.checkHash, payoutTxHash: c.payoutTxHash });
+    expect(await findBridgeCheck(db, "832820-2")).toBeNull();
   });
 
   it("refuses facts that do not hash to the check hash", async () => {

@@ -25,6 +25,12 @@ export async function recordBridgeCheck(db: Db, check: BridgeCheckRecord): Promi
   await db.insert(bridgeChecks).values(check).onConflictDoNothing();
 }
 
+/** The check recorded for a deposit ("block-index"): its hash and the payout it matched, or null if none is. */
+export async function findBridgeCheck(db: Db, depositId: string): Promise<{ checkHash: Hex; payoutTxHash: Hex } | null> {
+  const [row] = await db.select({ checkHash: bridgeChecks.checkHash, payoutTxHash: bridgeChecks.payoutTxHash }).from(bridgeChecks).where(eq(bridgeChecks.depositId, depositId));
+  return row ? { checkHash: row.checkHash as Hex, payoutTxHash: row.payoutTxHash as Hex } : null;
+}
+
 /** The check hash recorded for a deposit ("block-index"), or null if none is. */
 export async function findBridgeCheckHash(db: Db, depositId: string): Promise<Hex | null> {
   const [row] = await db.select({ checkHash: bridgeChecks.checkHash }).from(bridgeChecks).where(eq(bridgeChecks.depositId, depositId));
