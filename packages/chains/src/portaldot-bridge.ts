@@ -95,24 +95,71 @@ export function createBscClient(config: PortaldotBridgeConfig): PublicClient {
 const TRANSFER = parseAbiItem("event Transfer(address indexed from, address indexed to, uint256 value)");
 /** Public BSC nodes cap a log search at 50,000 blocks. */
 const BSC_LOG_SPAN = 49_999n;
-/** BSC produces a block about every 0.75 s; assuming faster blocks starts the search safely early. */
-const BSC_MIN_BLOCK_SECONDS = 0.5;
+/**
+ * A block time faster than BSC's (0.75 s in October 2026, 0.45 s since). It only sizes the first step
+ * back and how far past the deposit to search; where the search starts is found from block timestamps.
+ */
+const BSC_FAST_BLOCK_SECONDS = 0.4;
 
 /**
  * The public BSC endpoint balances requests across nodes, and some of them answer a search of older
- * blocks with no logs at all (seen on 2026-10-29: the same search came back empty 7 times in 12). A log
- * that is returned is real, since it names its transaction, so each search is sent several times at
- * once and the answers merged. Only when every attempt fails is the search an error.
+ * blocks with no logs at all: on 2026-10-29 the same search came back empty 7 times in 12, and on
+ * 2026-11-02 about 4 times in 5. A log that is returned is real, since it names its transaction, so
+ * each search is sent several times at once and the answers merged, and an empty answer is only
+ * believed after every attempt in every round comes back empty. A missed payout is worse than a slow
+ * check: the search would go on to match a later payout of the same amount to this deposit.
  */
 const LOG_SEARCH_ATTEMPTS = 6;
+const LOG_SEARCH_ROUNDS = 4;
 
 async function searchLogs<T extends { transactionHash: Hex; logIndex: number }>(search: () => Promise<T[]>): Promise<T[]> {
-  const answers = await Promise.allSettled(Array.from({ length: LOG_SEARCH_ATTEMPTS }, search));
-  const found = answers.flatMap((a) => (a.status === "fulfilled" ? [a.value] : []));
-  if (found.length === 0) throw (answers[0] as PromiseRejectedResult).reason;
-  const unique = new Map<string, T>();
-  for (const log of found.flat()) unique.set(`${log.transactionHash}:${log.logIndex}`, log);
-  return [...unique.values()];
+  let answered = false;
+  let firstError: unknown;
+  for (let round = 0; round < LOG_SEARCH_ROUNDS; round++) {
+    const answers = await Promise.allSettled(Array.from({ length: LOG_SEARCH_ATTEMPTS }, search));
+    const found = answers.flatMap((a) => (a.status === "fulfilled" ? [a.value] : []));
+    firstError ??= answers.find((a): a is PromiseRejectedResult => a.status === "rejected")?.reason;
+    answered ||= found.length > 0;
+    const logs = found.flat();
+    if (logs.length > 0) {
+      const unique = new Map<string, T>();
+      for (const log of logs) unique.set(`${log.transactionHash}:${log.logIndex}`, log);
+      return [...unique.values()];
+    }
+  }
+  if (!answered) throw firstError;
+  return [];
+}
+
+/**
+ * The first block with a timestamp at or after `time` (the head when none is). Found from the blocks'
+ * own timestamps rather than an assumed block time, which BSC has changed: with 0.45 s blocks, a search
+ * that assumed 0.5 s started after the deposit and missed payouts made soon after it. Steps back from
+ * the head, doubling the step until it passes `time`, then bisects: about twenty block reads.
+ */
+export async function firstBlockAtOrAfter(
+  client: Pick<PublicClient, "getBlock">,
+  time: number,
+  head: { number: bigint; timestamp: number },
+): Promise<bigint> {
+  if (time > head.timestamp) return head.number;
+  const timestampOf = async (blockNumber: bigint) => Number((await client.getBlock({ blockNumber })).timestamp);
+  let hi = head.number; // timestamp >= time
+  let step = BigInt(Math.ceil((head.timestamp - time) / BSC_FAST_BLOCK_SECONDS)) + 1n;
+  let lo = hi > step ? hi - step : 0n;
+  while (lo > 0n && (await timestampOf(lo)) >= time) {
+    hi = lo;
+    step *= 2n;
+    lo = lo > step ? lo - step : 0n;
+  }
+  if (lo === 0n && (await timestampOf(0n)) >= time) return 0n;
+  // Now timestamp(lo) < time <= timestamp(hi).
+  while (hi - lo > 1n) {
+    const mid = (lo + hi) / 2n;
+    if ((await timestampOf(mid)) >= time) hi = mid;
+    else lo = mid;
+  }
+  return hi;
 }
 
 /**
@@ -126,10 +173,8 @@ export async function findBridgePayouts(
   query: { after: number; amount: bigint; recipient?: Hex | null },
 ): Promise<BridgePayout[]> {
   const [head, finalized] = await Promise.all([client.getBlock(), client.getBlock({ blockTag: "finalized" })]);
-  const now = Number(head.timestamp);
-  const back = BigInt(Math.ceil(Math.max(0, now - query.after) / BSC_MIN_BLOCK_SECONDS));
-  let from = head.number > back ? head.number - back : 0n;
-  const last = from + BigInt(Math.ceil(config.maxPayoutDelaySeconds / BSC_MIN_BLOCK_SECONDS));
+  let from = await firstBlockAtOrAfter(client, query.after, { number: head.number, timestamp: Number(head.timestamp) });
+  const last = from + BigInt(Math.ceil(config.maxPayoutDelaySeconds / BSC_FAST_BLOCK_SECONDS));
   const until = last < head.number ? last : head.number;
   const found: BridgePayout[] = [];
   while (from <= until) {
