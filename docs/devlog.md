@@ -495,3 +495,17 @@ The deploy command was run from two sessions, seven blocks apart, so an identica
 The first paid 49.38 tPOT, almost all the storage deposit for the code; the second cost 17.34 tPOT, because Revive charges that deposit once per distinct code.
 The relayer kept 11.12 tPOT, about 800 writes at 0.013 tPOT each.
 No batch has been written to it yet: the watcher and the web app need this branch and `RECEIPT_BATCH_LOG_ADDRESS` first.
+
+### 2026-11-02: The first cheap anchor, and two fixes to the bridge checker
+
+The watcher has written to `ReceiptBatchLog` since its restart on 2026-11-01, and its first entry is a verified bridge transfer, deposit `876352-1`: one `BatchRecorded` log in block #291548 that cost 0.0186 tPOT, a little above the 0.013 tPOT simulated, and about 200 times less than a `ReceiptBatchRegistry` batch.
+At that price one transfer's 0.2 tPOT fee pays for about ten anchors.
+
+Testing it turned up two faults in the bridge checker.
+
+- **The payout search could start after the deposit.** It placed the deposit on BSC by assuming blocks no faster than every 0.5 s, but BSC now makes one every 0.45 s, so the search began about a tenth of the elapsed time too late and could miss a payout made soon after the deposit. It now finds the first BSC block at or after the deposit from block timestamps, stepping back from the head and bisecting.
+- **Empty answers came back more often.** The public BSC endpoint answered an older log search with nothing about four times in five, and once all six parallel attempts for 832820-1's range were empty. A missed range is worse than a slow one, because the search would go on to match a later payout of the same amount, so an empty answer is now only believed after four rounds of six attempts.
+
+That made a check of a deposit the bridge paid late slow: 876352-1 waited 44 hours for its payout, through a gap with no payouts at all, and took about two and a half minutes. Ranges are now searched three at a time, and a deposit already verified is re-checked from its recorded payout transaction alone, one receipt read: about a second on the live site, instead of a search.
+While testing I misread 876352-1's deposit time by two hours and took a 31 October payout for its own; the deposit came after both 2.91 WPOT payouts that day, and the bridge paid it on 2 November.
+

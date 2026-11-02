@@ -372,9 +372,8 @@ The core flow is proven on chain: real signed transfers were quoted, verified, f
 
 - **iBridge route.** Blocked on PortalDot: there is no public interface, and iBridge stays closed to third parties through demo day.
   RelayMesh keeps the provider slot and reports why it is unavailable.
-- **Relayer funding.** A `ReceiptBatchRegistry` batch costs 3.86 tPOT however many entries it holds, so the 0.2 tPOT fee covers anchoring in full only at about 20 transfers per batch.
-  `ReceiptBatchLog`, now deployed, fixes this once the watcher is switched to it: each write costs about 0.013 tPOT, so every transfer's fee more than pays for its own anchor.
-  At testnet volume most batches hold one or two entries, and the relayer's 77.84 tPOT pays for about 20 more batches before it needs a top-up.
+- **Relayer funding.** Solved by `ReceiptBatchLog`, which the watcher writes to since 2026-11-01: each anchor costs about 0.013 tPOT, so every transfer's 0.2 tPOT fee more than pays for its own.
+  Deploying it twice by mistake left the relayer 11.12 tPOT, enough for about 800 anchors.
 - **A second route.** Ranking only becomes meaningful with more than one live provider.
 - **Automated UI tests.** The web app's flows are verified by hand in a browser against the live testnet; the core, database, watcher and receipt-checking logic have automated tests.
 - **One server.** The web app and the watcher run on a single always-on machine; there is no failover, and a long outage can leave a transfer unmeasurable (it is flagged, never guessed).

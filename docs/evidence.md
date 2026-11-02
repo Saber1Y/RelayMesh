@@ -221,3 +221,20 @@ Together they cost 66.72 tPOT, leaving the relayer 11.12 tPOT.
 - **The code is the compiled contract.** The deploy script compares `eth_getCode` with the compiled runtime after filling in the recorder; the duplicate holds byte-for-byte the same code.
 - **Only the relayer can write.** `recorder()` returns the relayer address; a simulated `recordBatch` from the relayer succeeds and from any other account reverts.
 - **Nothing is recorded yet.** Neither address has emitted a `BatchRecorded` log.
+
+## First anchor in ReceiptBatchLog (2026-11-02)
+
+The first entry written to `ReceiptBatchLog` is a verified bridge transfer: deposit `876352-1`, 3 POT on Portaldot mainnet (extrinsic `0xfb1d8d0c…b3440dc5`, 2026-10-31 14:52 UTC), paid 2.91 WPOT on BSC in transaction `0xa605545f80506a533ecd93f35c7c89966ba9ee18c4c44a4e598b663e197714e5` (2026-11-02 10:42 UTC, 43 h 49 min later).
+
+| Item | Value |
+| --- | --- |
+| Check fingerprint | `0x88bb24802f2014a84983c420eacaefa6f6b9e5b8526b988a5e6e9c8cc852fd87` |
+| Root (one leaf) | `0xdae98cb9a0bea0e365b246344a499949ac5ac00f1788d827546258f86066fc9e` |
+| `recordBatch` transaction | `0xc1335ce5cdb826341cb0cfc8ae7c1c11fa53194e4c70e6fe30a4880e915ab287`, status `success`, one `BatchRecorded` log from `0x971d45f0daa772c02078ad6349c1bcffd833b4d5` |
+| Block | #291548 |
+| Cost | 0.0186 tPOT (gas used times its price, equal to the relayer's balance change across the block), against 3.86 tPOT for a `ReceiptBatchRegistry` batch |
+
+### How it was verified
+
+- **In the browser.** `/bridge?deposit=876352-1` on the live site re-hashes the deposit and payout it shows to the fingerprint, folds the proof and finds the root in the `BatchRecorded` log of that transaction, from RelayMesh's own contract: "Anchored on PortalDot V3", a batch of 1 entry, block #291548.
+- **Older anchors still verify.** `/bridge?deposit=832820-1` still reports its anchor in `ReceiptBatchRegistry`.
