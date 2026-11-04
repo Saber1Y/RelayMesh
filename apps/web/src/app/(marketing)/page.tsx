@@ -184,7 +184,7 @@ function FeeLedger({ ledger }: { ledger: Economics }) {
           </dl>
           {perBatch !== null && (
             <p className="max-w-[60ch] text-sm leading-relaxed text-muted text-pretty">
-              The latest anchor cost {tpot(perBatch, perBatch < 10n ** 12n ? 3 : 2)}, the same however many entries it holds, up to 256.
+              The latest anchor cost {tpot(perBatch, perBatch < 10n ** 13n ? 3 : 2)}, the same however many entries it holds, up to 256.
               {breakEven !== null &&
                 (breakEven <= 1n && anchorsPerFee !== null ? (
                   <> One transfer’s fee pays for about {anchorsPerFee.toString()} anchors, so every transfer is anchored as soon as it settles.</>
