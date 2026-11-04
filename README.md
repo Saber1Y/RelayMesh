@@ -1,7 +1,7 @@
 # RelayMesh
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
-![Tests](https://img.shields.io/badge/tests-109%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-212%20passing-brightgreen)
 ![Onchain](https://img.shields.io/badge/onchain-PortalDot%20V3%20testnet-blue)
 ![Loop](https://img.shields.io/badge/loop-intent%20%E2%86%92%20sign%20%E2%86%92%20verify%20%E2%86%92%20receipt-blueviolet)
 ![Stack](https://img.shields.io/badge/stack-Next.js%20+%20Postgres%20+%20Polkadot.js%20+%20viem-orange)
@@ -12,7 +12,7 @@ Moving value between chains usually means trusting a status page that says "comp
 RelayMesh turns a transfer into a structured intent, hands your wallet the exact call to sign, and only calls it settled after reading both sides from the chain itself.
 Every step lands in an append-only timeline and ends in a receipt anyone can re-hash.
 
-Live app: [relaymesh.162-62-231-147.sslip.io](https://relaymesh.162-62-231-147.sslip.io) · Watcher: always-on server · Contracts on PortalDot V3 testnet: `IntentRegistry` at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`.
+Live app: [relaymesh.162-62-231-147.sslip.io](https://relaymesh.162-62-231-147.sslip.io) · Watcher: always-on server · Receipts anchored on PortalDot V3 testnet in `ReceiptBatchLog` at `0x971d45f0daa772c02078ad6349c1bcffd833b4d5` (earlier ones in `ReceiptBatchRegistry` and `IntentRegistry`, which still verify).
 
 [See it in one command](#see-it-in-one-command) · [The one rule](#the-one-rule) · [Architecture](#architecture) · [What's real vs pending](#whats-real-vs-pending---the-honesty-table) · [Tests](#tests) · [Run it locally](#run-it-locally)
 
@@ -155,36 +155,38 @@ Receipts anchored one by one are checked against `IntentRegistry` exactly as bef
 For a receipt anchored in a batch, the browser recomputes its leaf, folds the Merkle proof RelayMesh serves up to a root, and finds that root in the `BatchRecorded` log of the batch transaction, emitted by one of RelayMesh's own batch contracts; a forged proof cannot reach a recorded root, so the proof needs no trust.
 It reports whether the receipt matches the chain, does not match (a changed receipt), carries a proof that leads nowhere, or is not anchored yet, and shows the anchoring transaction.
 
-### Batch anchoring
+### Anchoring on chain
 
-Every settled receipt is committed on chain, but not one write at a time.
-Anchoring each intent cost two `IntentRegistry` writes, about 23 tPOT per transfer, almost all of it Revive's storage deposit, and it drained the relayer.
-The watcher now collects settled receipts and writes one Merkle root per batch to `ReceiptBatchRegistry`, 3.86 tPOT per batch on V3 whatever its size (measured on a one-leaf and a two-leaf batch).
-A batch is written when 20 receipts are waiting or the oldest has waited 30 minutes (`ANCHOR_BATCH_SIZE`, `ANCHOR_BATCH_MAX_WAIT_MINUTES`).
+Every settled receipt and every verified bridge check is committed on PortalDot V3 as a Merkle root, and anyone can check one against the chain.
+How it is written changed twice, each time to cut the cost the relayer pays:
 
-Almost all of that 3.86 tPOT is the storage deposit for the one slot each batch writes.
-`ReceiptBatchLog` records the same root in an event and stores nothing, so a write costs about 0.013 tPOT (simulated on V3): one transfer's 0.2 tPOT fee pays for about 15 of them.
-With `RECEIPT_BATCH_LOG_ADDRESS` set, the watcher writes there and anchors each transfer as soon as it settles (`ANCHOR_BATCH_SIZE` defaults to 1); batching then only saves gas when several transfers settle together.
-Verification reads the root from the batch transaction's receipt, which works the same for both contracts, so everything in `ReceiptBatchRegistry` keeps verifying and is never anchored again.
-`ReceiptBatchLog` is deployed at `0x971d45f0daa772c02078ad6349c1bcffd833b4d5` (block #277373, [evidence](docs/evidence.md)).
+| Contract | Used | How | Cost per write |
+| --- | --- | --- | --- |
+| `IntentRegistry` `0xfcfc36e3…6c75eb5123` | Until 2026-10-29 | Two writes per transfer, receipt hash stored | About 23 tPOT per transfer |
+| `ReceiptBatchRegistry` `0x0a4e4bef…dbd5ae5e` | 2026-10-29 to 11-01 | One Merkle root stored per batch, written at 20 entries or after 30 minutes | 3.86 tPOT per batch |
+| `ReceiptBatchLog` `0x971d45f0…833b4d5` | Since 2026-11-01 | One Merkle root emitted in a `BatchRecorded` event, nothing stored | 0.0186 tPOT, measured |
 
-- Leaf: `keccak256("relaymesh.batch.leaf.v1\n" + {"intentHash","receiptHash"})`, the same canonical-JSON hashing as receipts.
+Almost all of the older costs is Revive's storage deposit; `ReceiptBatchLog` stores nothing, so it skips it.
+At 0.0186 tPOT a write, the watcher anchors each transfer and each bridge check as soon as it settles (`ANCHOR_BATCH_SIZE` defaults to 1), and one transfer's 0.2 tPOT fee pays for about ten anchors.
+Verification finds the root in the `BatchRecorded` log of the anchoring transaction, emitted by one of RelayMesh's own contracts, which works the same for both batch contracts; nothing is ever anchored twice, and everything anchored earlier still verifies where it is.
+
+- Leaf: `keccak256("relaymesh.batch.leaf.v1\n" + {"intentHash","receiptHash"})` for a receipt, `relaymesh.batch.bridge.v1` over the check fingerprint for a bridge check, the same canonical-JSON hashing as receipts.
 - Nodes: sorted-pair hashing under `relaymesh.batch.node.v1`, so a proof is just the sibling hashes; leaves and nodes never share a domain.
-- Each batch is stored with every leaf and proof before its root is sent, so a crash before or after mining resumes with the same root, read back from the contract.
-- The five receipts already in `IntentRegistry` are never re-batched and still verify there.
+- Each batch is stored with every leaf and proof before its root is sent, so a crash before or after mining resumes with the same root, found again from its event.
 
-Live since 2026-10-29: 3 batches holding 5 entries (4 receipts and 1 bridge check), 11.58 tPOT spent in all; the first is transaction `0xa55a7d13…63198f0bae` in block #244183 ([evidence](docs/evidence.md)).
+On chain today: 5 receipts in `IntentRegistry`; 3 batches with 4 receipts and 1 bridge check in `ReceiptBatchRegistry`; 5 entries in `ReceiptBatchLog` (1 receipt and 4 bridge checks), the first in block #291548 ([evidence](docs/evidence.md)).
 
 ### A fee that pays for anchoring
 
-Each transfer pays a small RelayMesh fee (`RELAYMESH_FEE`, 0.2 tPOT on the live server) to the relayer that writes the receipt batches, in the same signed call as the transfer (`utility.batchAll`), so both happen or neither does.
+Each transfer pays a small RelayMesh fee (`RELAYMESH_FEE`, 0.2 tPOT on the live server) to the relayer that anchors receipts, in the same signed call as the transfer (`utility.batchAll`), so both happen or neither does.
+At 0.0186 tPOT per anchor, one fee pays for about ten.
 The recipient still gets the full amount; the browser checks the bundled call before signing; the fee counts against `maxFee` and is recorded in the receipt as `serviceFee`.
 The landing page shows what the fee has collected against what anchoring has cost on chain.
 
 ### API for developers
 
 The **Developers** page ([/developers](https://relaymesh.162-62-231-147.sslip.io/developers)) documents the HTTP API for intents, receipts, anchors and bridge checks, with curl examples and a live call for every GET endpoint.
-It lists the hash rules and contract addresses, and gives a short script, using only viem, that checks a receipt against ReceiptBatchRegistry without any RelayMesh code.
+It lists the hash rules and contract addresses, and gives a short script, using only viem, that checks a receipt against PortalDot V3 without any RelayMesh code.
 
 ### Checks for the live PortalDot bridge
 
@@ -192,9 +194,16 @@ The **Bridge** page ([/bridge](https://relaymesh.162-62-231-147.sslip.io/bridge)
 Given a deposit's explorer ID, RelayMesh reads the deposit from the Portaldot mainnet node (finalized, successful, into the bridge's deposit address) and searches BSC for the payout: a WPOT transfer from the bridge's reserve, after the deposit, of exactly the deposit less the bridge's 3% fee, in a finalized block, and to the user's BSC address when one is given.
 The bridge's own API is never asked.
 The bridge does not link its two transactions on chain, so the payout is matched by exact amount, order and optional recipient, and the page says so; a proven deposit with no payout yet is reported as pending, since the bridge pays out in batches hours later.
-Each fully verified transfer is then anchored on PortalDot V3: its check fingerprint becomes a leaf (`relaymesh.batch.bridge.v1`) in the same ReceiptBatchRegistry batches as receipts.
-The page shows the check as queued, batching or anchored, and for an anchored check the browser re-hashes the facts shown, folds the Merkle proof and reads the root from the contract itself.
-Public BSC nodes behind one load balancer sometimes answer an old log search with nothing, so each search is sent several times at once and the answers merged.
+Each fully verified transfer is then anchored on PortalDot V3: its check fingerprint becomes a leaf (`relaymesh.batch.bridge.v1`) anchored the same way as receipts.
+The page shows the check as queued, batching or anchored, and for an anchored check the browser re-hashes the facts shown, folds the Merkle proof and finds the root on chain itself.
+
+Three details keep the match right on real BSC data:
+
+- **The search starts at the deposit.** The first BSC block at or after the deposit is found from block timestamps; assuming a block time missed payouts once BSC moved to 0.45 s blocks.
+- **An empty answer is not trusted at once.** The public BSC endpoint answers many older log searches with nothing, so each search is sent six times at once, in up to four rounds, and only counts as empty when every attempt is; a missed range could otherwise match a later payout of the same amount.
+- **A verified deposit is not searched again.** Its payout is re-read from the recorded BSC transaction, about a second instead of minutes; a first check of a deposit the bridge paid days later can take one to two and a half minutes.
+
+Verified and anchored so far: deposits `832820-1` (33 POT), `876352-1` (3 POT), `860457-1` (44 POT), `861198-1` (0.2 POT) and `859621-1` (6.7 POT).
 
 ## Architecture
 
@@ -314,9 +323,9 @@ The full diagrams, including the state machine and a sequence diagram, are in [d
 
 **Writes**
 
-- The user's wallet submits `balances.transferKeepAlive` from a Substrate account to the account that controls the target EVM address.
-- The watcher's relayer calls `ReceiptBatchRegistry.recordBatch` once per batch of settled receipts, on the deployed contract `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e`.
-- Until batching, it called `IntentRegistry.recordIntent` and `recordReceipt` on `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123` after each settlement; those four receipts stay anchored there.
+- The user's wallet submits one `utility.batchAll`: `balances.transferKeepAlive` to the account that controls the target EVM address, and the RelayMesh fee to the relayer's account.
+- The watcher's relayer calls `ReceiptBatchLog.recordBatch` on `0x971d45f0daa772c02078ad6349c1bcffd833b4d5` as each receipt or bridge check is ready.
+- Before that it wrote to `ReceiptBatchRegistry` (`0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e`) and, before batching, `IntentRegistry` (`0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`); what was anchored there stays there and still verifies.
 
 The route uses Revive's account mapping: an EVM address is controlled by its mapped native account or by its fallback account `h160 ++ 0xEE * 12`, and `eth_getBalance` reports that account's reducible balance times 10^4.
 
@@ -357,23 +366,23 @@ Those blocks are located from on-chain block timestamps, read from each block's 
 | Server-side verification of reported transactions | Real - rejection paths verified live against real blocks |
 | Watcher finality, scanning and expiry | Real - ran against live V3; expired stale intents correctly |
 | Historical `eth_getBalance` delta measurement | Real - measured 0 to 0.9 tPOT across block #122911 for a live transfer |
-| A signed tPOT transfer settled end to end | Real - nine transfers settled on V3: five before batching (blocks #122911, #136917, #172163, #232117, #238153) and four since, including two that paid the fee ([evidence](docs/evidence.md)) |
+| A signed tPOT transfer settled end to end | Real - ten transfers settled on V3, 382 tPOT in all: five before batching (blocks #122911, #136917, #172163, #232117, #238153) and five since, three of them paying the fee ([evidence](docs/evidence.md)) |
 | `IntentRegistry` deployment and anchoring | Real - deployed at `0xfcfc36e3ea951640d1e495a1e671d66c75eb5123`; five settled receipts anchored and re-checked against the contract |
 | `ReceiptBatchRegistry` batch anchoring | Real - deployed at `0x0a4e4bef58f22a47f28cece57b41ba67dbd5ae5e` (block #238209); 3 batches with 4 receipts and 1 bridge check, each verified in the browser by folding its proof to the on-chain root |
-| RelayMesh fee | Real - 0.2 tPOT per transfer in the same signed `utility.batchAll`; two transfers paid it and the relayer's balance rose by exactly 0.4 tPOT |
+| `ReceiptBatchLog` anchoring | Real - deployed at `0x971d45f0daa772c02078ad6349c1bcffd833b4d5` (block #277373); in use since 2026-11-01, 5 entries so far at 0.0186 tPOT each, verified in the browser from the anchoring transaction's event |
+| RelayMesh fee | Real - 0.2 tPOT per transfer in the same signed `utility.batchAll`; three transfers paid it, and the first two raised the relayer's balance by exactly 0.4 tPOT |
 | Developers page and API | Real - every GET endpoint runs live against the deployment; the viem-only script verifies a receipt on V3 without RelayMesh code |
 | iBridge cross-chain route | Not yet established - no public interface from PortalDot; confirmed closed to third parties through demo day |
-| Checking live PortalDot bridge transfers (POT to BSC) | Real - read-only, verified a 33 POT deposit against its 32.01 WPOT payout on BSC; verified checks are anchored in the V3 receipt batches |
+| Checking live PortalDot bridge transfers (POT to BSC) | Real - read-only; five deposits verified against their WPOT payouts on BSC and anchored on V3, pending and non-deposit cases reported as such |
 | Hosted deployment | Real - web app and watcher on an always-on server behind Caddy, Postgres on Render, serving the same settled transfers and receipts |
 
-The core flow is proven on chain: real signed transfers were quoted, verified, finalized, measured, receipted and anchored, first in `IntentRegistry` and now in Merkle batches (see [docs/evidence.md](docs/evidence.md)).
+The core flow is proven on chain: real signed transfers were quoted, verified, finalized, measured, receipted and anchored, first in `IntentRegistry`, then in Merkle batches, and now in `ReceiptBatchLog` (see [docs/evidence.md](docs/evidence.md)).
 
 ### What's left
 
 - **iBridge route.** Blocked on PortalDot: there is no public interface, and iBridge stays closed to third parties through demo day.
   RelayMesh keeps the provider slot and reports why it is unavailable.
-- **Relayer funding.** Solved by `ReceiptBatchLog`, which the watcher writes to since 2026-11-01: each anchor costs about 0.013 tPOT, so every transfer's 0.2 tPOT fee more than pays for its own.
-  Deploying it twice by mistake left the relayer 11.12 tPOT, enough for about 800 anchors.
+- **Slow first checks of late bridge payouts.** A deposit the bridge paid days later takes one to two and a half minutes to check the first time, because the public BSC endpoint has to be asked repeatedly; re-checks take about a second.
 - **A second route.** Ranking only becomes meaningful with more than one live provider.
 - **Automated UI tests.** The web app's flows are verified by hand in a browser against the live testnet; the core, database, watcher and receipt-checking logic have automated tests.
 - **One server.** The web app and the watcher run on a single always-on machine; there is no failover, and a long outage can leave a transfer unmeasurable (it is flagged, never guessed).
@@ -383,14 +392,14 @@ The core flow is proven on chain: real signed transfers were quoted, verified, f
 
 | Suite | Tests | Covers |
 | --- | --- | --- |
-| `packages/core` | 62 | Amounts, canonical hashing, intents, state machine, quotes, settlement, idempotency, receipts, Merkle batches and proofs |
-| `packages/routes` | 18 | Substrate-to-EVM quoting and plans, iBridge slot, ranking, rejection reporting |
-| `packages/chains` | 4 | Revive address mapping |
-| `contracts` | 4 | Every source compiles without warnings, committed ABIs are current, the recorder immutable lands where solc says |
-| `apps/web` | 17 | In-browser receipt checks against the real anchored receipt: registry and batch matches, tampered receipts, forged proofs |
-| `apps/worker` | 12 | Scan ranges, batching configuration and the upgrade path from per-intent anchoring |
-| `packages/db` (Postgres) | 23 | Round trips, idempotency races, append-only triggers, plans, concurrency, batch plans and proofs |
-| `apps/worker` (Postgres) | 32 | Settlement, forks, short and missing deliveries, pruned state, scanner, expiry, clock skew, batch thresholds, crash recovery, the funds pause |
+| `packages/core` | 79 | Amounts, canonical hashing, intents, state machine, quotes, settlement, idempotency, receipts and the service fee, Merkle batches and bridge leaves, bridge assessment |
+| `packages/routes` | 23 | Substrate-to-EVM quoting and plans, the service fee bundled into the call, iBridge slot, ranking, rejection reporting |
+| `packages/chains` | 10 | Revive address mapping, locating the BSC block where a payout search starts |
+| `contracts` | 5 | Every source compiles without warnings, committed ABIs are current, the recorder immutable lands where solc says |
+| `apps/web` | 17 | In-browser receipt checks against the real anchored receipt: registry and batch matches, tampered receipts, forged proofs, untrusted contracts |
+| `apps/worker` | 13 | Scan ranges, batching configuration for both batch contracts, the upgrade path from per-intent anchoring |
+| `packages/db` (Postgres) | 31 | Round trips, idempotency races, append-only triggers, plans, concurrency, batch plans and proofs, bridge checks, fee totals |
+| `apps/worker` (Postgres) | 34 | Settlement, forks, short and missing deliveries, pruned state, scanner, expiry, clock skew, batching and per-transfer anchoring, bridge checks, crash recovery, the funds pause |
 
 ```bash
 cd RelayMesh
@@ -444,13 +453,13 @@ pnpm deploy:batch-log  # about 50 tPOT for new code; same recorder rule
 
 ## The one-flow demo
 
-1. Open http://localhost:3010, press Launch desk, and connect Talisman with a funded PortalDot V3 account.
+1. Open http://localhost:3010, press Open the app, and connect Talisman with a funded PortalDot V3 account; the form shows its tPOT balance.
 2. Enter an EVM address you control, 1 tPOT, and a 10 minute deadline, then press Get quotes.
-3. Review the route: expected EVM-side amount, fee estimate, and the iBridge rejection reason.
-4. Press Review this route and check the call your browser decoded.
+3. Review the route: expected EVM-side amount, the network fee and the RelayMesh fee, and the iBridge rejection reason.
+4. Press Review this route and check the call your browser decoded: the transfer and the fee, in one `utility.batchAll`.
 5. Press Sign in wallet and approve in Talisman.
 6. Watch the timeline move from In block to Source final to Settled as the watcher confirms finality and measures the balance change.
-7. Open the receipt, download the JSON, and recompute its hash.
+7. Open the receipt, download the JSON, and recompute its hash, or check it on the Verify page once it is anchored, a few seconds after settling.
 
 ## Configuration
 
@@ -475,6 +484,8 @@ pnpm deploy:batch-log  # about 50 tPOT for new code; same recorder rule
 | `ANCHOR_BATCH_SIZE` | Write a batch once this many receipts wait (default 1 with `ReceiptBatchLog`, 20 otherwise) |
 | `ANCHOR_BATCH_MAX_WAIT_MINUTES` | ...or once the oldest has waited this long (default 30) |
 | `ANCHOR_BATCH_MAX_LEAVES` | Most receipts in one batch (default 256) |
+| `RELAYMESH_FEE` | RelayMesh's fee per transfer in tPOT, for example `0.2`; set with the next one or not at all (web app) |
+| `RELAYMESH_FEE_RECIPIENT` | The `0x` address whose account receives the fee: the relayer, so fees pay for anchoring (web app) |
 | `INTENT_REGISTRY_ADDRESS` | `IntentRegistry`, read by the web app's receipt checker for receipts anchored before batching |
 | `INTENT_REGISTRY_DEPLOY_BLOCK` | Block that registry was deployed in (136936 on V3); lets the receipt checker show its anchoring transactions |
 | `WATCHER_POLL_MS` | Delay between passes (default 6000) |
@@ -515,7 +526,7 @@ The watcher must run nonstop, so it runs next to the web app under PM2:
 ```bash
 git clone https://github.com/Saber1Y/RelayMesh.git relaymesh && cd relaymesh
 corepack pnpm install --frozen-lockfile --filter "@relaymesh/worker..." --filter "@relaymesh/db..."
-# .env: DATABASE_URL (external URL with ?sslmode=require), RECEIPT_BATCH_REGISTRY_ADDRESS, RELAYER_PRIVATE_KEY
+# .env: DATABASE_URL (external URL with ?sslmode=require), RECEIPT_BATCH_LOG_ADDRESS, RECEIPT_BATCH_REGISTRY_ADDRESS, RELAYER_PRIVATE_KEY
 node --import tsx --env-file=.env packages/db/src/migrate-cli.ts
 pm2 start apps/worker/ecosystem.config.cjs && pm2 save
 ```
@@ -526,7 +537,9 @@ Run only one watcher per relayer key.
 
 ### Contract
 
-`pnpm --filter @relaymesh/contracts deploy:batch-registry`, then set `RECEIPT_BATCH_REGISTRY_ADDRESS` for the watcher and the web app, and `RELAYER_PRIVATE_KEY` (the recorder) for the watcher.
+`pnpm --filter @relaymesh/contracts deploy:batch-log` (about 50 tPOT), then set `RECEIPT_BATCH_LOG_ADDRESS` for the watcher and the web app, and `RELAYER_PRIVATE_KEY` (the recorder) for the watcher.
+Keep `RECEIPT_BATCH_REGISTRY_ADDRESS` and `INTENT_REGISTRY_ADDRESS` set on the web app so what was anchored there still verifies.
+Run the deploy from one place only: a second run deploys a second, identical contract.
 A watcher that still has only `INTENT_REGISTRY_ADDRESS` and `RELAYER_PRIVATE_KEY` keeps settling and logs that anchoring is off.
 
 ## Project layout
