@@ -45,7 +45,7 @@ const INTENT_ID = /^0x[0-9a-fA-F]{32}$/;
 const STEP_TEXT: Record<Step, string> = {
   fetching: "Fetching the receipt",
   hashing: "Hashing it in your browser",
-  reading: "Reading the registries on PortalDot V3",
+  reading: "Reading RelayMesh’s contracts on PortalDot V3",
 };
 
 const VERDICT: Record<Verdict, { tone: Tone; title: string; body: string; icon: ReactNode }> = {
@@ -76,7 +76,7 @@ const VERDICT: Record<Verdict, { tone: Tone; title: string; body: string; icon: 
   not_anchored: {
     tone: "neutral",
     title: "Not anchored on chain",
-    body: "Neither registry holds anything for this intent. Receipts are anchored once a transfer settles, in batches, so a receipt that settled minutes ago may still be waiting for its batch.",
+    body: "Nothing is anchored on chain for this intent yet. A receipt is anchored a few seconds after its transfer settles, so check again shortly; a transfer that has not settled has nothing to anchor.",
     icon: <Question size={22} weight="fill" />,
   },
 };

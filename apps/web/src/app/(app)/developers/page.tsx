@@ -348,7 +348,7 @@ export default async function DevelopersPage() {
                 <ContractCard
                   name="ReceiptBatchLog"
                   address={batchLog}
-                  role="Records a Merkle root per batch of receipts and bridge checks in an event, storing nothing, so each write costs about 0.013 tPOT and every transfer is anchored as it settles. Used for new batches."
+                  role="Records a Merkle root per batch of receipts and bridge checks in an event, storing nothing, so each write costs about 0.019 tPOT (measured) and every transfer is anchored as it settles. Used for everything new since 1 November."
                   reads={["event BatchRecorded(root, recorder, leafCount)", "recorder() → address"]}
                 />
               )}

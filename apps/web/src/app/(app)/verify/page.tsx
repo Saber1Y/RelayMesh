@@ -44,8 +44,8 @@ export default async function VerifyPage({ searchParams }: { searchParams: Promi
           <p className="text-sm font-medium text-accent">Verify</p>
           <h1 className="text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">Check a receipt against the chain</h1>
           <p className="max-w-[60ch] text-muted">
-            Your browser hashes the receipt and reads RelayMesh’s registries on PortalDot V3 itself. RelayMesh’s server is never asked whether it matches; for a
-            receipt anchored in a batch, it only supplies a Merkle proof that your browser checks against the chain.
+            Your browser hashes the receipt and checks it against RelayMesh’s contracts on PortalDot V3 itself. RelayMesh’s server is never asked whether it
+            matches; it only supplies a Merkle proof and the anchoring transaction, which your browser checks against the chain.
           </p>
         </div>
         <ReceiptVerifier

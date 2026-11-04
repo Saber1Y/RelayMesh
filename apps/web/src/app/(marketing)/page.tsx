@@ -47,9 +47,9 @@ const FLOW = [
 
 const STATUS: { name: string; tone: Tone; label: string; body: string }[] = [
   { name: "Substrate to EVM transfers on V3", tone: "positive", label: "Live", body: "Quoted, signed, finalized and measured on chain, then receipted." },
-  { name: "Receipts anchored in batches", tone: "positive", label: "Live", body: "Settled receipts go on chain as Merkle roots, each receipt with a proof anyone can fold against the recording transaction." },
-  { name: "Checks of PortalDot bridge transfers", tone: "positive", label: "Live", body: "Read-only: POT deposits on Portaldot mainnet against WPOT payouts on BSC, and each verified check anchored in the same batches." },
-  { name: "A fee that funds anchoring", tone: "positive", label: "Live", body: "Each transfer pays 0.2 tPOT to the relayer in the same signed call, recorded in its receipt." },
+  { name: "Receipts anchored on chain", tone: "positive", label: "Live", body: "Each receipt goes on PortalDot V3 as soon as it settles, for about 0.019 tPOT, with a proof anyone can check against the anchoring transaction." },
+  { name: "Checks of PortalDot bridge transfers", tone: "positive", label: "Live", body: "Read-only: POT deposits on Portaldot mainnet against WPOT payouts on BSC, and each verified check anchored on V3 like a receipt." },
+  { name: "A fee that funds anchoring", tone: "positive", label: "Live", body: "Each transfer pays 0.2 tPOT to the relayer in the same signed call, recorded in its receipt; that pays for about ten anchors." },
   { name: "iBridge route", tone: "neutral", label: "Waiting", body: "PortalDot has confirmed iBridge stays closed to third parties through demo day." },
 ];
 
@@ -154,12 +154,12 @@ function FeeLedger({ ledger }: { ledger: Economics }) {
   const fee = ledger.feePerTransfer;
   const perBatch = ledger.latestBatchCost;
   const breakEven = fee && perBatch ? (perBatch + fee - 1n) / fee : null;
-  const covered = ledger.anchoringSpent > 0n ? Number((ledger.feesCollected * 1000n) / ledger.anchoringSpent) / 10 : null;
+  const anchorsPerFee = fee && perBatch ? fee / perBatch : null;
   const figures = [
     { label: "RelayMesh fee", value: fee ? tpot(fee) : "Off", note: "per transfer, paid in the same signed call" },
     { label: "Collected", value: tpot(ledger.feesCollected), note: `from ${ledger.feeTransfers} settled ${ledger.feeTransfers === 1 ? "transfer" : "transfers"}` },
     { label: "Spent on anchoring", value: tpot(ledger.anchoringSpent), note: `${ledger.batches} ${ledger.batches === 1 ? "batch" : "batches"}, ${ledger.anchoredEntries} entries on V3` },
-    { label: "Relayer balance", value: ledger.relayerBalance === null ? "Not set" : tpot(ledger.relayerBalance), note: "pays for the next batches" },
+    { label: "Relayer balance", value: ledger.relayerBalance === null ? "Not set" : tpot(ledger.relayerBalance), note: "pays for the next anchors" },
   ];
   return (
     <section id="fee" className="mx-auto w-full max-w-[1160px] scroll-mt-28 border-t border-line px-5 py-24 md:px-10 md:py-28">
@@ -168,7 +168,7 @@ function FeeLedger({ ledger }: { ledger: Economics }) {
           <p className="text-sm font-semibold text-accent">Sustainability</p>
           <h2 className="text-4xl font-semibold tracking-[-0.05em] text-balance md:text-5xl">Each transfer pays for its own proof.</h2>
           <p className="max-w-[44ch] leading-relaxed text-muted text-pretty">
-            Anchoring receipts on chain costs gas. A small fee, signed in the same call as the transfer, goes straight to the relayer that writes the batches. The recipient
+            Anchoring receipts on chain costs gas. A small fee, signed in the same call as the transfer, goes straight to the relayer that writes the anchors. The recipient
             still gets the full amount, and the fee is part of the receipt anyone can verify.
           </p>
         </div>
@@ -184,14 +184,16 @@ function FeeLedger({ ledger }: { ledger: Economics }) {
           </dl>
           {perBatch !== null && (
             <p className="max-w-[60ch] text-sm leading-relaxed text-muted text-pretty">
-              The latest batch cost {tpot(perBatch, perBatch < 10n ** 12n ? 3 : 2)}, the same however many entries it holds, up to 256.
+              The latest anchor cost {tpot(perBatch, perBatch < 10n ** 12n ? 3 : 2)}, the same however many entries it holds, up to 256.
               {breakEven !== null &&
-                (breakEven <= 1n ? (
-                  <> One transfer’s fee covers a batch on its own, so every transfer is anchored as soon as it settles.</>
+                (breakEven <= 1n && anchorsPerFee !== null ? (
+                  <> One transfer’s fee pays for about {anchorsPerFee.toString()} anchors, so every transfer is anchored as soon as it settles.</>
                 ) : (
                   <> At {breakEven.toString()} transfers per batch the fee covers it in full; with full batches of 256 it could be about {tpot(perBatch / 256n, 3)}.</>
                 ))}
-              {covered !== null && <> So far, at testnet volume, fees have covered {covered}% of anchoring.</>}
+              {ledger.anchoringSpent > ledger.feesCollected && (
+                <> Most of the spending so far went to RelayMesh’s earlier contracts, which stored every root at about 3.86 tPOT a write.</>
+              )}
             </p>
           )}
         </div>
