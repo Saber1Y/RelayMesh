@@ -24,7 +24,7 @@ const Env = z.object({
   RELAYER_PRIVATE_KEY: z.string().regex(HEX_KEY).optional(),
   /**
    * Write a batch as soon as this many settled receipts are waiting... Defaults to 1 with the log
-   * contract, whose writes cost about 0.013 tPOT, so each transfer is anchored as soon as it settles;
+   * contract, whose writes cost about 0.019 tPOT, so each transfer is anchored as soon as it settles;
    * to 20 with the registry, whose writes cost about 3.9 tPOT.
    */
   ANCHOR_BATCH_SIZE: z.coerce.number().int().min(1).optional(),

@@ -38,7 +38,7 @@ export const EVENT_LOOKBACK_BLOCKS = 5_000n;
 
 /**
  * The relayer cannot pay for a write. A ReceiptBatchRegistry write costs about 3.9 tPOT on PortalDot
- * V3, almost all of it Revive's storage deposit; a ReceiptBatchLog write about 0.013 tPOT.
+ * V3, almost all of it Revive's storage deposit; a ReceiptBatchLog write about 0.019 tPOT (measured 2026-11-02).
  */
 export class RelayerFundsError extends Error {
   constructor(

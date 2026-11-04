@@ -546,9 +546,10 @@ async function expireStale(ctx: WatcherContext, finalized: BlockRef, summary: Pa
 const anchoringPausedUntil = new WeakMap<BatchRegistryClient, number>();
 
 /**
- * Anchors settled receipts in ReceiptBatchRegistry, one Merkle root per batch. A batch is stored with
- * every leaf and proof before its root is sent, so after a crash the exact root is read back from the
- * contract instead of being rebuilt from a set of waiting receipts that may have changed meanwhile.
+ * Anchors settled receipts and verified bridge checks in the configured batch contract
+ * (ReceiptBatchLog, or ReceiptBatchRegistry before it), one Merkle root per batch. A batch is stored
+ * with every leaf and proof before its root is sent, so after a crash the exact root is found again on
+ * chain instead of being rebuilt from a set of waiting entries that may have changed meanwhile.
  */
 async function anchorReceipts(ctx: WatcherContext, summary: PassSummary): Promise<void> {
   const registry = ctx.registry;
