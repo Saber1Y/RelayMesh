@@ -1,0 +1,47 @@
+{
+  "voice": {
+    "name": "The Neighbor",
+    "archetype": "feat_04_the_neighbor",
+    "instruct": "female, young adult, moderate pitch, american accent",
+    "seed": 43
+  },
+  "lines": [
+    {
+      "id": "intro-01",
+      "text": "Moving tokens across chains usually means trusting a black box."
+    },
+    {
+      "id": "intro-02",
+      "text": "You sign, you wait, and you hope it lands."
+    },
+    {
+      "id": "intro-03",
+      "text": "RelayMesh opens the box, right on Portal Dot."
+    },
+    {
+      "id": "intro-04",
+      "text": "Choose where it goes, and see each fee before you pay. Then sign once."
+    },
+    {
+      "id": "intro-05",
+      "text": "Watch each step settle live, block by block, until the funds arrive on the other side."
+    },
+    {
+      "id": "intro-06",
+      "text": "You get a receipt, and its hash is anchored on chain. Anyone can check it, right in their browser."
+    },
+    {
+      "id": "intro-07",
+      "text": "It also checks the bridge to B N B Chain, payout by payout, and anchors the result."
+    },
+    {
+      "id": "intro-08",
+      "text": "And developers get all of it through an open API, ready to call."
+    },
+    {
+      "id": "intro-09",
+      "text": "RelayMesh. Cross-chain transfers you can prove.",
+      "whole": true
+    }
+  ]
+}

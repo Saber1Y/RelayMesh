@@ -1,0 +1,47 @@
+{
+  "intro-01": {
+    "file": "voiceover/intro-01.wav",
+    "seconds": 3.54,
+    "text": "Moving tokens across chains usually means trusting a black box."
+  },
+  "intro-02": {
+    "file": "voiceover/intro-02.wav",
+    "seconds": 2.41,
+    "text": "You sign, you wait, and you hope it lands."
+  },
+  "intro-03": {
+    "file": "voiceover/intro-03.wav",
+    "seconds": 2.42,
+    "text": "RelayMesh opens the box, right on Portal Dot."
+  },
+  "intro-04": {
+    "file": "voiceover/intro-04.wav",
+    "seconds": 4.42,
+    "text": "Choose where it goes, and see each fee before you pay. Then sign once."
+  },
+  "intro-05": {
+    "file": "voiceover/intro-05.wav",
+    "seconds": 4.21,
+    "text": "Watch each step settle live, block by block, until the funds arrive on the other side."
+  },
+  "intro-06": {
+    "file": "voiceover/intro-06.wav",
+    "seconds": 4.85,
+    "text": "You get a receipt, and its hash is anchored on chain. Anyone can check it, right in their browser."
+  },
+  "intro-07": {
+    "file": "voiceover/intro-07.wav",
+    "seconds": 4.37,
+    "text": "It also checks the bridge to B N B Chain, payout by payout, and anchors the result."
+  },
+  "intro-08": {
+    "file": "voiceover/intro-08.wav",
+    "seconds": 3.17,
+    "text": "And developers get all of it through an open API, ready to call."
+  },
+  "intro-09": {
+    "file": "voiceover/intro-09.wav",
+    "seconds": 2.98,
+    "text": "RelayMesh. Cross-chain transfers you can prove."
+  }
+}
