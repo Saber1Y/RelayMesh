@@ -14,7 +14,7 @@ Every step lands in an append-only timeline and ends in a receipt anyone can re-
 
 Live app: [relaymesh.162-62-231-147.sslip.io](https://relaymesh.162-62-231-147.sslip.io) · Watcher: always-on server · Receipts anchored on PortalDot V3 testnet in `ReceiptBatchLog` at `0x971d45f0daa772c02078ad6349c1bcffd833b4d5` (earlier ones in `ReceiptBatchRegistry` and `IntentRegistry`, which still verify).
 
-[See it in one command](#see-it-in-one-command) · [The one rule](#the-one-rule) · [Architecture](#architecture) · [What's real vs pending](#whats-real-vs-pending---the-honesty-table) · [Tests](#tests) · [Run it locally](#run-it-locally)
+[See it in one command](#see-it-in-one-command) · [The one rule](#the-one-rule) · [Architecture](#architecture) · [What's real vs pending](#whats-real-vs-pending---the-honesty-table) · [Roadmap](#roadmap-after-the-hacker-house) · [Tests](#tests) · [Run it locally](#run-it-locally) · [Pitch deck (PDF)](docs/RelayMesh-deck.pdf)
 
 Built for the PortalDot V3.0 Hacker House 2026 (Multi-Chain and Cross-Chain Infrastructure track, scope under review with the organizers).
 MIT licensed.
@@ -44,7 +44,8 @@ It never holds keys or funds, and it is not a bridge, custodian or financial ser
 - [Configuration](#configuration)
 - [Deploy](#deploy)
 - [Project layout](#project-layout)
-- [Tech stack, credits, roadmap](#tech-stack-credits-roadmap)
+- [Roadmap: after the Hacker House](#roadmap-after-the-hacker-house)
+- [Tech stack and credits](#tech-stack-and-credits)
 - [Disclaimer and license](#disclaimer-and-license)
 
 ## See it in one command
@@ -562,7 +563,34 @@ RelayMesh/
   docker-compose.yml
 ```
 
-## Tech stack, credits, roadmap
+## Roadmap: after the Hacker House
+
+RelayMesh does not end with the Hacker House.
+The goal is a verification layer for every value transfer on PortalDot: any wallet, dApp, bridge or treasury can ask "did this land?" and get a receipt the chain itself backs.
+What is below is planned work, not shipped; everything shipped is in the [honesty table](#whats-real-vs-pending---the-honesty-table) and the [pitch deck](docs/RelayMesh-deck.pdf).
+
+### Phase 1: complete the routes (next)
+
+- **iBridge adapter.** The provider slot is in place; when PortalDot opens iBridge, its POT to BSC transfers get the same quote, plan, verify and receipt flow, checked on both chains by transaction hash, and anchored on V3.
+- **EVM to Substrate route.** The reverse direction, so quotes compete and ranking matters.
+- **Resolve-review flow.** A transfer held for review is resolved with recorded evidence, never edited.
+- **Operations.** CI on every pull request (types, lint, unit, database and build), and a standby watcher that takes over through a Postgres advisory lock.
+
+### Phase 2: build on it (integrations)
+
+- **TypeScript SDK.** Create intents, verify receipts and check bridge transfers from any app, with the same in-browser checks as the Verify page.
+- **Signed webhooks.** A callback URL per intent, with signed, retried and logged status updates, so wallets and dApps hear about settlement without polling.
+- **Embeddable proof.** A "verified by RelayMesh" receipt badge and verification widget any wallet or explorer can drop in.
+- **Bridge monitoring.** Track every deposit into PortalDot's bridge, flag payouts that are late or missing, and publish the record.
+
+### Phase 3: mainnet and beyond
+
+- **Mainnet.** `ReceiptBatchLog` and the relayer on PortalDot mainnet, funded by the per-transfer fee.
+- **Treasury payout receipts.** OpenGov spends carry a receipt proving the funds reached their recipient.
+- **More chains and bridges.** The same deposit-to-payout proof for every route PortalDot connects, and beyond.
+- **Less trust in the operator.** Several independent recorders, and verification against light clients instead of public RPC endpoints.
+
+## Tech stack and credits
 
 ### Tech stack
 
@@ -572,12 +600,6 @@ TypeScript, pnpm workspaces, Next.js 16, React 19, Tailwind CSS 4, Postgres 17 w
 
 PortalDot for the V3 testnet and for confirming the endpoints and the current state of iBridge.
 The polkadot.js, viem and Drizzle maintainers.
-
-### Roadmap
-
-- Add the iBridge provider when PortalDot publishes a programmatic interface.
-- Add a second route to make ranking meaningful across providers.
-- Webhooks for integrators.
 
 ## Disclaimer and license
 
